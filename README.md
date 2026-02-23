@@ -89,6 +89,26 @@ Execution contract:
 - This repository is designed for copy/paste usage.
 - Keep one-shot prompt execution as the primary workflow.
 - Added policy gates are internal checks run by the agent in the same flow, not an extra user workflow.
+- For reliability, run final audit (Step 6) as a separate second prompt after the main flow.
+
+## Final Audit (separate prompt, recommended)
+
+Paste this after the main migration prompt completes:
+
+```text
+Run Step 6 from docs/migration-step-prompts.md as a separate final audit pass.
+
+Rules:
+- run in read-only audit mode first
+- apply only minimal fixes if required
+- rerun audit after fixes
+
+Output:
+1. PASS/FAIL summary
+2. findings by severity with file:line
+3. minimal patch diff (if any)
+4. rerun result after patch
+```
 
 ## Manual Mode (if needed)
 

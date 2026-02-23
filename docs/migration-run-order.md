@@ -74,6 +74,9 @@ Execution order:
 4. Optional Step D
 5. Step 5
 
+Post-run recommendation (all cases):
+- Run Step 6 (final audit) from `docs/migration-step-prompts.md` as a separate prompt.
+
 ## 4. Integration Gates (Case B/C)
 
 Run these checks after Optional Step C and before final validation:
@@ -99,6 +102,7 @@ Do the migration end-to-end with minimal user interruption:
 - Auto-detect scenario (Case A/B/C) using the detection command in migration-run-order.md.
 - Execute exact step order for that case.
 - Run validation gates and per-step reports exactly as defined.
+- Keep final audit (Step 6) as a separate follow-up prompt for reliability.
 - Do not stop between normal steps.
 - Ask for confirmation only when:
   1) command permission/escalation is required

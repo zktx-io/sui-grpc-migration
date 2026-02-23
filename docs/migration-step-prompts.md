@@ -201,6 +201,59 @@ Step report:
 Policy gate reminder:
 - Run mandatory checks from `docs/policy-gates.md` and include pass/fail in this step report.
 
+## Step 6 - Final Independent Audit (run as separate prompt)
+
+Use this as a separate second prompt after the main migration flow completes.
+
+Paste into AI agent:
+
+```text
+Run a final independent migration audit in read-only mode first.
+Apply minimal fixes only if needed, then rerun the audit.
+
+Audit scope:
+- migrated source files
+- migration-related docs/rules in this project
+
+Checks:
+1. Workflow/policy consistency
+- no conflict between README, run-order, step-prompts, rules, and policy gates
+- one-shot copy/paste flow remains intact
+
+2. Mandatory pattern gates
+- `rg "SuiJsonRpcClient|@mysten/sui/jsonRpc|getJsonRpcFullnodeUrl" src`
+- `rg "new WalrusClient|new SuinsClient|@mysten/sui/client|getFullnodeUrl|@mysten/sui/experimental" src`
+- `rg "from ['\"]@tanstack/react-query['\"]|require\\(['\"]@tanstack/react-query['\"]\\)" . -g "*.{ts,tsx,js,jsx,mjs,cjs}" -g "!node_modules/**" -g "!.git/**"`
+- `rg "\"@tanstack/react-query\"\\s*:" . -g "package.json" -g "!node_modules/**" -g "!.git/**"`
+
+3. Transaction loading contract check
+- digest loading uses two-stage path (gRPC getTransaction -> GraphQL fallback)
+- explicit error exists when both sources miss
+
+Output:
+1. PASS/FAIL summary
+2. findings by severity with file:line
+3. minimal patch diff (if any)
+4. rerun result after patch
+```
+
+Verify:
+- audit output includes concrete evidence and file paths
+- all mandatory gates are accounted for
+- unresolved findings are tracked as blockers
+
+Step TODO:
+- [ ] Step 6 prompt executed
+- [ ] audit report captured
+- [ ] post-fix rerun status captured
+
+Step report:
+1. step name + completion status
+2. commands executed
+3. PASS/FAIL summary
+4. findings (file:line, severity)
+5. remaining blockers + reproduction
+
 ## Optional Step A - Copy Walrus/SuiNS guide
 
 Paste into AI agent:
