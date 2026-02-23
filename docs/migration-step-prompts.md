@@ -115,6 +115,10 @@ Migrate all frontend files detected in Step 2 based on section 5.
 - Show output as a diff
 - Replace all @mysten/dapp-kit imports with @mysten/dapp-kit-react
 - Never introduce `SuiJsonRpcClient` or imports from `@mysten/sui/jsonRpc`
+- Run React Query usage gate:
+  1) `rg "from ['\"]@tanstack/react-query['\"]|require\\(['\"]@tanstack/react-query['\"]\\)" . -g "*.{ts,tsx,js,jsx,mjs,cjs}" -g "!node_modules/**" -g "!.git/**"`
+  2) if no matches, uninstall `@tanstack/react-query`
+  3) if matches exist, keep dependency and report matched files
 Output:
 1. migrated frontend file list
 2. per-file diff
@@ -126,7 +130,9 @@ Verify:
 - `useSuiClient` -> `useDAppKit()`
 - `useSignAndExecuteTransaction` -> `dAppKit.signAndExecuteTransaction`
 - Legacy `@mysten/dapp-kit` imports are removed
-- `@tanstack/react-query` is removed only when app code does not use it directly
+- React Query usage gate is applied and result is explicit:
+  - no direct imports -> dependency removed
+  - direct imports exist -> dependency kept with file list
 - No forbidden JSON-RPC imports remain in frontend outputs
 
 Step TODO:
@@ -170,12 +176,15 @@ Also run:
 
 ```bash
 rg "SuiJsonRpcClient|@mysten/sui/jsonRpc|getJsonRpcFullnodeUrl" src
+rg "from ['\"]@tanstack/react-query['\"]|require\\(['\"]@tanstack/react-query['\"]\\)" . -g "*.{ts,tsx,js,jsx,mjs,cjs}" -g "!node_modules/**" -g "!.git/**"
+rg "\"@tanstack/react-query\"\\s*:" . -g "package.json" -g "!node_modules/**" -g "!.git/**"
 ```
 
 Verify:
 - typecheck/build/test statuses are reported
 - blockers (if any) are concrete and reproducible
 - forbidden JSON-RPC check is clean
+- React Query gate result is reported (removed if unused, kept with usage evidence if used)
 
 Step TODO:
 - [ ] Step 5 prompt executed

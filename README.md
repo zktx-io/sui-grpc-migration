@@ -67,6 +67,7 @@ Hard policies:
 - Never introduce SuiJsonRpcClient.
 - Never import from @mysten/sui/jsonRpc.
 - Digest transaction content loading must use a two-stage loader: gRPC `getTransaction(...)` first, then GraphQL fallback with explicit error when both miss.
+- Apply React Query usage gate: remove `@tanstack/react-query` when no direct app imports exist; keep only with usage evidence.
 
 Per-step output (mandatory):
 1. step name + completion status

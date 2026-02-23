@@ -80,8 +80,11 @@ rg "useSignAndExecuteTransaction|useSuiClient" src -g "*.ts" -g "*.tsx"
 npm install @mysten/sui@^2.4.0 @mysten/dapp-kit-react @mysten/dapp-kit-core
 npm uninstall @mysten/dapp-kit
 
-# Optional cleanup:
-# Remove react-query only if your app does not import/use it directly.
+# React Query cleanup (usage-gated):
+# 1) detect direct app usage first
+rg "from ['\"]@tanstack/react-query['\"]|require\\(['\"]@tanstack/react-query['\"]\\)" . -g "*.{ts,tsx,js,jsx,mjs,cjs}" -g "!node_modules/**" -g "!.git/**"
+
+# 2) if NO matches from step 1, remove dependency
 npm uninstall @tanstack/react-query
 ```
 
@@ -98,6 +101,11 @@ npm uninstall @tanstack/react-query
 > Official migration docs still show `useMutation` / `useQuery` examples for advanced UX patterns.
 > Conclusion: `@tanstack/react-query` is optional for dApp Kit React itself and useful as a UI state-management wrapper.
 > In `@mysten/dapp-kit-react` 1.x, internal React state hooks are implemented with `nanostores` (`useStore`) rather than React Query hooks.
+
+React Query decision contract:
+- If direct imports are present, keep `@tanstack/react-query` and report matched files.
+- If direct imports are absent, remove `@tanstack/react-query` from manifests/lockfiles.
+- Do not keep unused `@tanstack/react-query` after migration.
 
 ## 4. Backend Migration (Node.js)
 

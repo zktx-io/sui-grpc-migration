@@ -18,7 +18,9 @@ Do not reason from `@mysten/sui.js` legacy names like `executeTransactionBlock`.
 - Execution: `client.executeTransaction({ transaction: txBytes, signatures: [sig] })`
 - React Provider: `DAppKitProvider` from `@mysten/dapp-kit-react`
 - Wallet hook: `useDAppKit()` from `@mysten/dapp-kit-react`
-- `@tanstack/react-query` is optional (use it only for mutation/query UI state wrappers)
+- `@tanstack/react-query` usage gate:
+- if app code has no direct imports from `@tanstack/react-query`, remove the dependency
+- if app code has direct imports, keep it and report usage files
 - Events / complex queries: use GraphQL or an indexer
 - Full migration reference: `docs/sui-grpc-migration.md`
 - If official docs and installed SDK API differ, follow installed SDK definitions in `node_modules/@mysten/*/dist/*.d.mts`

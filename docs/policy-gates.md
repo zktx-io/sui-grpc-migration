@@ -20,11 +20,20 @@ rg "SuiJsonRpcClient|@mysten/sui/jsonRpc|getJsonRpcFullnodeUrl" src
 
 # Gate B: no legacy Walrus/SuiNS client construction (when optional track applies)
 rg "new WalrusClient|new SuinsClient|@mysten/sui/client|getFullnodeUrl|@mysten/sui/experimental" src
+
+# Gate C: React Query direct usage detection
+rg "from ['\"]@tanstack/react-query['\"]|require\\(['\"]@tanstack/react-query['\"]\\)" . -g "*.{ts,tsx,js,jsx,mjs,cjs}" -g "!node_modules/**" -g "!.git/**"
+
+# Gate C.1: React Query dependency presence in manifests
+rg "\"@tanstack/react-query\"\\s*:" . -g "package.json" -g "!node_modules/**" -g "!.git/**"
 ```
 
 Pass criteria:
 - No matches in Gate A.
 - No matches in Gate B for migrated Walrus/SuiNS paths.
+- Gate C decision:
+  - if Gate C has no source matches, `@tanstack/react-query` must be removed from manifests
+  - if Gate C has matches, `@tanstack/react-query` may remain and matched files must be reported
 
 If a gate fails:
 - Mark as `BLOCKER`.
