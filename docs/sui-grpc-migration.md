@@ -6,19 +6,19 @@
 
 ---
 
-## 0. Validation Baseline (dummy-project/v2)
+## 0. Validation Baseline
 
-Use `dummy-project/v2` as the local source of truth when validating generated migration code.
+Use your target project's installed `node_modules` as the local source of truth when validating generated migration code.
 
 Validation precedence for this guide:
 1. Installed SDK types/source (`node_modules/@mysten/*`) for exact API shape.
 2. Official docs for migration direction and architecture guidance.
 3. If docs and installed SDK conflict, follow installed SDK and annotate the mismatch.
 
-- Installed baseline: `@mysten/sui@2.4.0` · `@mysten/dapp-kit-react@1.0.2` · `@mysten/dapp-kit-core@1.0.4`
+- Installed baseline example: `@mysten/sui@2.4.0` · `@mysten/dapp-kit-react@1.0.2` · `@mysten/dapp-kit-core@1.0.4`
 - gRPC client method surface: `node_modules/@mysten/sui/dist/grpc/client.d.mts`
 - Execute/simulate option fields: `node_modules/@mysten/sui/dist/client/types.d.mts`
-- Legacy JSON-RPC-only methods: `node_modules/@mysten/sui/dist/jsonRpc/client.d.mts`
+- Legacy JSON-RPC-only methods: `node_modules/@mysten/sui/dist/jsonRpc/client.d.mts` (verification-only, not migration target)
 - React export surface: `node_modules/@mysten/dapp-kit-react/dist/index.mjs`
 
 ```bash
@@ -45,6 +45,7 @@ This guide covers migration from `@mysten/sui` 1.x to 2.x.
 - Transaction execution/simulation path → gRPC (`@mysten/sui/grpc`)
 - React wallet integration → migrate to `@mysten/dapp-kit-react`
 - Event/complex queries → separate into GraphQL or an indexer
+- Migration policy: do not introduce `SuiJsonRpcClient` or imports from `@mysten/sui/jsonRpc`
 
 Reference: https://sdk.mystenlabs.com/sui/clients/grpc
 
@@ -61,6 +62,9 @@ rg "@mysten/dapp-kit['\"]" src -g "*.ts" -g "*.tsx"
 
 # Backend migration traces (1.x -> 2.x)
 rg "devInspectTransactionBlock|dryRunTransactionBlock|queryEvents|queryTransactionBlocks|multiGetTransactionBlocks|getOwnedObjects|multiGetObjects|getCoins" src
+
+# Disallow in migrated output
+rg "SuiJsonRpcClient|@mysten/sui/jsonRpc|getJsonRpcFullnodeUrl" src -g "*.ts" -g "*.tsx"
 
 # Legacy frontend hook traces
 rg "useSignAndExecuteTransaction|useSuiClient" src -g "*.ts" -g "*.tsx"
@@ -94,8 +98,6 @@ npm uninstall @tanstack/react-query
 > Official migration docs still show `useMutation` / `useQuery` examples for advanced UX patterns.
 > Conclusion: `@tanstack/react-query` is optional for dApp Kit React itself and useful as a UI state-management wrapper.
 > In `@mysten/dapp-kit-react` 1.x, internal React state hooks are implemented with `nanostores` (`useStore`) rather than React Query hooks.
-
----
 
 ## 4. Backend Migration (Node.js)
 
@@ -145,7 +147,8 @@ const exec = await client.executeTransaction({
 | `getCoins` | `client.listCoins` |
 | `multiGetObjects` | `client.getObjects` |
 | `getOwnedObjects` | `client.listOwnedObjects` |
-| `queryEvents` / `queryTransactionBlocks` | GraphQL recommended |
+| `getTransactionBlock` (digest loading) | GraphQL-first transaction query; avoid gRPC-only loaders |
+| `queryEvents` / `queryTransactionBlocks` | GraphQL-first (especially long-term/unknown-age data) |
 
 > `executeTransactionBlock` remains on legacy JSON-RPC client paths and is not a `SuiGrpcClient` method.
 > Note: official gRPC docs may still show `getCoins` in some examples. On `@mysten/sui@2.4.0`, use `listCoins` per installed SDK types.
@@ -164,6 +167,7 @@ const exec = await client.executeTransaction({
 ### 4.5 Transaction Result Shape Changes
 
 Core API returns a discriminated union. Do not assume top-level fields like `res.digest`.
+The snippet below is for **core response shape reference** only; for digest-based loading policy, follow section 4.6 (GraphQL-first).
 
 ```typescript
 const result = await client.getTransaction({
@@ -186,13 +190,28 @@ const changed = tx.effects?.changedObjects ?? [];
 | `receipt.effects.created[]` | Filter `tx.effects?.changedObjects` by `idOperation === 'Created'` | Use `outputState` / `outputOwner` as needed |
 | `receipt.timestampMs` | `tx.epoch` | Epoch identifier, not millisecond timestamp |
 
-### 4.6 gRPC + GraphQL Strategy for Historical Queries
+### 4.6 Historical Transaction Loading (Project Policy)
 
-Use gRPC as default for execution and low-latency reads, and keep a GraphQL fallback for historical lookups.
+This policy is for loading **already-existing transactions by digest** (for example digest from DB/search/user input).
+Treat this separately from immediate post-submit confirmation.
+This section defines this guide's migration policy, not a universal protocol mandate.
 
-- Fullnode data can be pruned over time (older transactions might not be available).
-- GraphQL RPC is indexer-backed and better suited for historical / complex queries.
-- Default retention can vary by operator configuration.
+| Use case | Recommended path |
+|----------|------------------|
+| Just executed/published in the same flow | gRPC `executeTransaction` + gRPC `waitForTransaction` |
+| Any digest-based loading (`getTransaction`-style lookup) | GraphQL-first (project default) |
+| Historical lookup (old digest, backfill, archive, analytics) | GraphQL-first (project policy) |
+| Unknown age digest | GraphQL-first (project policy) |
+
+- Do not ship gRPC-only digest loaders in this migration policy.
+- Keep `grpcClient.getTransaction(...)` as non-default fallback for generic digest loading in this migration policy.
+- If age is unknown, classify as historical.
+
+Reason:
+
+- Fullnode data can be pruned over time (older transactions might not be available through gRPC fullnodes).
+- GraphQL is indexer-backed and typically offers longer retention for historical transaction retrieval and complex query patterns.
+- Retention windows vary by operator, so age-based assumptions must be conservative.
 
 ```typescript
 import { SuiGrpcClient } from '@mysten/sui/grpc';
@@ -220,31 +239,66 @@ const GET_TX_QUERY = `
   }
 `;
 
-async function fetchTransactionWithFallback(digest: string) {
+// Post-submit confirmation path (not historical loading):
+// Prefer gRPC wait in the same execution/publish workflow.
+async function executeAndConfirm(txBytes: Uint8Array, signature: string) {
+  const exec = await grpcClient.executeTransaction({
+    transaction: txBytes,
+    signatures: [signature],
+  });
+
+  const digest =
+    exec.$kind === 'Transaction' ? exec.Transaction.digest : exec.FailedTransaction.digest;
+
+  return grpcClient.waitForTransaction({
+    digest,
+    include: { effects: true },
+  });
+}
+
+async function fetchFromGraphQL(digest: string) {
+  const r = await gqlClient.query<
+    { transaction: { digest: string; transactionBcs: string } | null },
+    { digest: string }
+  >({
+    query: GET_TX_QUERY,
+    variables: { digest },
+  });
+  return { source: 'graphql', tx: r.data?.transaction ?? null };
+}
+
+async function loadTransactionByDigest(digest: string) {
+  // Default path for digest loading: GraphQL first.
   try {
+    return await fetchFromGraphQL(digest);
+  } catch {
+    // Optional fallback for temporary indexer lag on very fresh transactions.
+    // Do not remove GraphQL-first behavior.
     const result = await grpcClient.getTransaction({
       digest,
       include: { bcs: true, effects: true },
     });
     const tx =
       result.$kind === 'Transaction' ? result.Transaction : result.FailedTransaction;
-    return { source: 'grpc', tx };
-  } catch {
-    // In production, prefer fallback for "not found/pruned" style errors.
-    const r = await gqlClient.query<{ transaction: { digest: string; transactionBcs: string } | null }, { digest: string }>({
-      query: GET_TX_QUERY,
-      variables: { digest },
-    });
-    return { source: 'graphql', tx: r.data?.transaction ?? null };
+    return { source: 'grpc-fallback', tx };
   }
 }
 ```
 
 > Operational note: if your project parses transaction bytes manually, verify byte shape per source before applying byte-offset logic.
 > Some flows return `TransactionData` bytes directly, while others may include signed-envelope bytes.
+> `Transaction.from(...)` accepts base64-encoded bytes, so GraphQL `transactionBcs` can usually be passed directly.
 > Official `SuiGraphQLClient` docs currently show both:
 > - mainnet example: `https://sui-mainnet.mystenlabs.com/graphql`
 > - testnet query example: `https://graphql.testnet.sui.io/graphql`
+> - Do not assume one fixed hostname pattern for every network. Verify endpoints from current official docs/release notes.
+> - Browser apps can hit CORS depending on environment; if needed, route GraphQL through your app/server proxy.
+> - Re-validation command example (save output in CI/logs when claiming verification):
+>   `curl -sS https://graphql.testnet.sui.io/graphql -H "content-type: application/json" --data '{"query":"{ __type(name:\"Transaction\"){ fields { name } } }"}'`
+>   Confirm `transactionBcs` exists.
+> - Re-validation command example for effects structure:
+>   `curl -sS https://graphql.testnet.sui.io/graphql -H "content-type: application/json" --data '{"query":"{ __type(name:\"TransactionEffects\"){ fields { name } } }"}'`
+>   Confirm `objectChanges` exists, then verify `nodes` through your concrete transaction query output.
 
 ### 4.7 Single vs Batch Object Reads
 
@@ -355,7 +409,10 @@ const result = await dAppKit.signAndExecuteTransaction({ transaction });
 ### 5.4 Common Frontend API Mismatches (Validated)
 
 - There is no `useDisconnectWallet` hook in `@mysten/dapp-kit-react`. Use `await dAppKit.disconnectWallet()` instead.
-- `ConnectModal` does not provide a `trigger` prop. Use `ConnectButton` as the trigger surface, or control modal open state directly.
+- `ConnectModal` does not provide a `trigger` prop in `@mysten/dapp-kit-react`.
+- Use `ConnectButton` as the default trigger surface.
+- Prefer `ConnectModal` `open` prop for direct control in React.
+- `show()` / `close()` are Web Component methods on `DAppKitConnectModal`, but are not explicitly exposed as a typed React ref API in `@mysten/dapp-kit-react`; treat ref-method use as runtime-verified only.
 - `dAppKit.network` does not exist. Use `dAppKit.networks` for supported networks and `useCurrentNetwork()` for the current network.
 - `dAppKit.setNetwork(...)` does not exist. Use `dAppKit.switchNetwork(network)`.
 - `dAppKit.client` does not exist. Use `useCurrentClient()` or `dAppKit.getClient()`.
@@ -402,7 +459,8 @@ Do not port legacy polling-based event queries as-is — redesign them.
 - `waitForTransaction(...)` uses `include`/`timeout` options (core API style), not JSON-RPC `showObjectChanges`.
 - Use `include: { objectTypes: true }` when you need object type information.
 - In gRPC/core result shapes, `objectChanges` is not a top-level field. Prefer `effects.changedObjects` first.
-- If `effects.changedObjects` is insufficient for your use case, add a manual follow-up query (for example `getTransaction({ include: { bcs: true } })`) and leave a TODO.
+- If `effects.changedObjects` is insufficient, add a follow-up digest query and leave a TODO.
+- For digest-based follow-up reads, keep GraphQL-first policy. Use `grpcClient.getTransaction(...)` only for explicit fallback or immediate post-submit workflows.
 
 ---
 
@@ -411,8 +469,8 @@ Do not port legacy polling-based event queries as-is — redesign them.
 ```
 1. Replace backend code + stabilize compilation
 2. Replace frontend Provider / hooks
-3. testnet E2E (simulate → execute → wallet sign)
-4. Canary deployment (partial traffic)
+3. staging E2E (simulate → execute → wallet sign)
+4. Phased deployment (partial traffic)
 5. Full cutover, then remove all legacy 1.x-only code paths
 ```
 
@@ -424,6 +482,7 @@ Do not port legacy polling-based event queries as-is — redesign them.
 - [Sui Core client API](https://sdk.mystenlabs.com/sui/clients/core)
 - [Sui gRPC client API](https://sdk.mystenlabs.com/sui/clients/grpc)
 - [Sui GraphQL client API](https://sdk.mystenlabs.com/sui/clients/graphql)
+- [Sui Clients overview (compatibility notes)](https://sdk.mystenlabs.com/sui/clients)
 - [dApp Kit migration](https://sdk.mystenlabs.com/sui/migrations/sui-2.0/dapp-kit)
 - [dApp Kit React hooks](https://sdk.mystenlabs.com/dapp-kit/react/hooks/use-dapp-kit)
 - [Sign and Execute Transaction (dApp Kit action)](https://sdk.mystenlabs.com/dapp-kit/actions/sign-and-execute-transaction)

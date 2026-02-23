@@ -4,7 +4,14 @@ This project uses the gRPC client from `@mysten/sui/grpc`.
 Assume migration scope is `@mysten/sui` 1.x -> 2.x only.
 Do not reason from `@mysten/sui.js` legacy names like `executeTransactionBlock`.
 
-- Do NOT create new JSON-RPC `SuiClient` instances
+- Do NOT import from `@mysten/sui/jsonRpc` in migrated code
+- Do NOT create or keep `SuiJsonRpcClient` (or legacy `SuiClient`) instances
+- If a path appears JSON-RPC-only, do NOT implement it with JSON-RPC fallback. Leave a `BLOCKER` + TODO for manual redesign.
+- Transaction loading policy:
+- Immediate post-submit confirmation (same execute/publish flow): use gRPC `waitForTransaction`
+- Historical/unknown-age digest loading: GraphQL-first (do not use gRPC-only loaders)
+- Any `getTransaction`-style digest loading: GraphQL-first by default
+- `grpcClient.getTransaction(...)` may be used only as a fallback path, not as the primary/default loader
 - Client: `import { SuiGrpcClient } from '@mysten/sui/grpc'`
 - Simulation: `client.simulateTransaction({ transaction })`
 - If replacing devInspect: `client.simulateTransaction({ transaction, include: { commandResults: true } })`
