@@ -9,9 +9,9 @@ Do not reason from `@mysten/sui.js` legacy names like `executeTransactionBlock`.
 - If a path appears JSON-RPC-only, do NOT implement it with JSON-RPC fallback. Leave a `BLOCKER` + TODO for manual redesign.
 - Transaction loading policy:
 - Immediate post-submit confirmation (same execute/publish flow): use gRPC `waitForTransaction`
-- Historical/unknown-age digest loading: GraphQL-first (do not use gRPC-only loaders)
-- Any `getTransaction`-style digest loading: GraphQL-first by default
-- `grpcClient.getTransaction(...)` may be used only as a fallback path, not as the primary/default loader
+- Any `getTransaction`-style digest loading: use two-stage loading (gRPC first, GraphQL fallback)
+- Historical/unknown-age digest loading: do not use single-source loaders
+- If both gRPC and GraphQL miss, return explicit `pruned/not found` error (no silent failure)
 - Client: `import { SuiGrpcClient } from '@mysten/sui/grpc'`
 - Simulation: `client.simulateTransaction({ transaction })`
 - If replacing devInspect: `client.simulateTransaction({ transaction, include: { commandResults: true } })`

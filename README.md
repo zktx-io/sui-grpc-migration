@@ -12,14 +12,14 @@ Migration kit for upgrading Sui SDK projects from `@mysten/sui` 1.x to 2.x with 
 
 ```text
 sui-grpc-migration/
-├── README.md
-├── docs/
-│   ├── migration-run-order.md      <- scenario detection + execution order
-│   ├── migration-step-prompts.md   <- Step 1~5 and Optional A~D prompt blocks
-│   ├── sui-grpc-migration.md       <- Sui SDK migration reference (API details)
-│   └── walrus-suins-migration.md   <- Walrus/SuiNS migration reference (optional track)
-└── agents/
-    └── sui-grpc-rules.md           <- rules to inject into target project AI rules file
+- README.md
+- docs/
+  - migration-run-order.md      <- scenario detection + execution order
+  - migration-step-prompts.md   <- Step 1~5 and Optional A~D prompt blocks
+  - sui-grpc-migration.md       <- Sui SDK migration reference (API details)
+  - walrus-suins-migration.md   <- Walrus/SuiNS migration reference (optional track)
+- agents/
+  - sui-grpc-rules.md           <- rules to inject into target project AI rules file
 ```
 
 ## Quick Start
@@ -62,7 +62,7 @@ Read first:
 Hard policies:
 - Never introduce SuiJsonRpcClient.
 - Never import from @mysten/sui/jsonRpc.
-- Digest transaction content loading must be GraphQL-first by default.
+- Digest transaction content loading must use a two-stage loader: gRPC `getTransaction(...)` first, then GraphQL fallback with explicit error when both miss.
 
 Per-step output (mandatory):
 1. step name + completion status

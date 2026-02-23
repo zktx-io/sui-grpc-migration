@@ -13,7 +13,7 @@ Detailed step prompts are in `docs/migration-step-prompts.md`.
 
 - Do not introduce `SuiJsonRpcClient`.
 - Do not introduce imports from `@mysten/sui/jsonRpc`.
-- For digest-based transaction content loading, use **GraphQL-first** policy.
+- For digest-based transaction content loading, use a **two-stage loader** (`gRPC getTransaction` first, then GraphQL fallback with explicit error when both miss).
 - For same-flow submit confirmation (`waitForTransaction`), gRPC is allowed.
 
 ## 2. Scenario Detection

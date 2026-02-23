@@ -1,7 +1,7 @@
-# Sui SDK 1.x → 2.x Migration Guide (gRPC/GraphQL)
+# Sui SDK 1.x -> 2.x Migration Guide (gRPC/GraphQL)
 
-> **Package versions**: `@mysten/sui@^2.4.0` · `@mysten/dapp-kit-react@^1.0.2` · `@mysten/dapp-kit-core@^1.0.4`  
-> **Scope**: `@mysten/sui` 1.x → 2.x (assumes `@mysten/sui.js` migration already completed)
+> **Package versions**: `@mysten/sui@^2.4.0`, `@mysten/dapp-kit-react@^1.0.2`, `@mysten/dapp-kit-core@^1.0.4`  
+> **Scope**: `@mysten/sui` 1.x -> 2.x (assumes `@mysten/sui.js` migration already completed)
 > **Runtime requirement**: `@mysten/sui@2.4.0` requires Node `>=22`
 
 ---
@@ -15,7 +15,7 @@ Validation precedence for this guide:
 2. Official docs for migration direction and architecture guidance.
 3. If docs and installed SDK conflict, follow installed SDK and annotate the mismatch.
 
-- Installed baseline example: `@mysten/sui@2.4.0` · `@mysten/dapp-kit-react@1.0.2` · `@mysten/dapp-kit-core@1.0.4`
+- Installed baseline example: `@mysten/sui@2.4.0`, `@mysten/dapp-kit-react@1.0.2`, `@mysten/dapp-kit-core@1.0.4`
 - gRPC client method surface: `node_modules/@mysten/sui/dist/grpc/client.d.mts`
 - Execute/simulate option fields: `node_modules/@mysten/sui/dist/client/types.d.mts`
 - Legacy JSON-RPC-only methods: `node_modules/@mysten/sui/dist/jsonRpc/client.d.mts` (verification-only, not migration target)
@@ -42,9 +42,9 @@ rg '^export' node_modules/@mysten/dapp-kit-react/dist/index.mjs
 This guide covers migration from `@mysten/sui` 1.x to 2.x.
 `@mysten/sui.js` legacy naming (for example `executeTransactionBlock`) is out of scope.
 
-- Transaction execution/simulation path → gRPC (`@mysten/sui/grpc`)
-- React wallet integration → migrate to `@mysten/dapp-kit-react`
-- Event/complex queries → separate into GraphQL or an indexer
+- Transaction execution/simulation path -> gRPC (`@mysten/sui/grpc`)
+- React wallet integration -> migrate to `@mysten/dapp-kit-react`
+- Event/complex queries -> separate into GraphQL or an indexer
 - Migration policy: do not introduce `SuiJsonRpcClient` or imports from `@mysten/sui/jsonRpc`
 
 Reference: https://sdk.mystenlabs.com/sui/clients/grpc
@@ -57,7 +57,7 @@ Run the following to identify files that need migration.
 
 ```bash
 # Legacy dapp-kit traces
-# @mysten/dapp-kit['"] — matches both quote styles, avoids false-positives on dapp-kit-react
+# @mysten/dapp-kit['"] - matches both quote styles, avoids false-positives on dapp-kit-react
 rg "@mysten/dapp-kit['\"]" src -g "*.ts" -g "*.tsx"
 
 # Backend migration traces (1.x -> 2.x)
@@ -147,13 +147,13 @@ const exec = await client.executeTransaction({
 | `getCoins` | `client.listCoins` |
 | `multiGetObjects` | `client.getObjects` |
 | `getOwnedObjects` | `client.listOwnedObjects` |
-| `getTransactionBlock` (digest loading) | GraphQL-first transaction query; avoid gRPC-only loaders |
+| `getTransactionBlock` (digest loading) | Two-stage loader: gRPC `getTransaction` first, then GraphQL fallback; avoid single-source loaders |
 | `queryEvents` / `queryTransactionBlocks` | GraphQL-first (especially long-term/unknown-age data) |
 
 > `executeTransactionBlock` remains on legacy JSON-RPC client paths and is not a `SuiGrpcClient` method.
 > Note: official gRPC docs may still show `getCoins` in some examples. On `@mysten/sui@2.4.0`, use `listCoins` per installed SDK types.
 
-### 4.4 JSON-RPC `options` → Core API `include` Mapping
+### 4.4 JSON-RPC `options` -> Core API `include` Mapping
 
 | 1.x `options` key | 2.x `include` key | Notes |
 |-------------------|-------------------|-------|
@@ -167,7 +167,7 @@ const exec = await client.executeTransaction({
 ### 4.5 Transaction Result Shape Changes
 
 Core API returns a discriminated union. Do not assume top-level fields like `res.digest`.
-The snippet below is for **core response shape reference** only; for digest-based loading policy, follow section 4.6 (GraphQL-first).
+The snippet below is for **core response shape reference** only; for digest-based loading policy, follow section 4.6 (two-stage loader policy).
 
 ```typescript
 const result = await client.getTransaction({
@@ -190,7 +190,7 @@ const changed = tx.effects?.changedObjects ?? [];
 | `receipt.effects.created[]` | Filter `tx.effects?.changedObjects` by `idOperation === 'Created'` | Use `outputState` / `outputOwner` as needed |
 | `receipt.timestampMs` | `tx.epoch` | Epoch identifier, not millisecond timestamp |
 
-### 4.6 Historical Transaction Loading (Project Policy)
+### 4.6 Digest-Based Transaction Loading (Project Policy)
 
 This policy is for loading **already-existing transactions by digest** (for example digest from DB/search/user input).
 Treat this separately from immediate post-submit confirmation.
@@ -199,23 +199,28 @@ This section defines this guide's migration policy, not a universal protocol man
 | Use case | Recommended path |
 |----------|------------------|
 | Just executed/published in the same flow | gRPC `executeTransaction` + gRPC `waitForTransaction` |
-| Any digest-based loading (`getTransaction`-style lookup) | GraphQL-first (project default) |
-| Historical lookup (old digest, backfill, archive, analytics) | GraphQL-first (project policy) |
-| Unknown age digest | GraphQL-first (project policy) |
+| Unknown-age digest loading | gRPC `getTransaction` first -> GraphQL fallback |
+| Verification/audit (for example publish/upgrade digest checks) | gRPC first -> GraphQL fallback -> explicit error if both miss |
+| Analytics/archive pipelines | GraphQL-primary (indexer-backed), optional gRPC for very fresh data |
 
-- Do not ship gRPC-only digest loaders in this migration policy.
-- Keep `grpcClient.getTransaction(...)` as non-default fallback for generic digest loading in this migration policy.
-- If age is unknown, classify as historical.
+Rules:
+
+- Do not ship single-source digest loaders (gRPC-only or GraphQL-only) for verification paths.
+- Stage 1: call gRPC `getTransaction({ digest, include: { bcs: true } })`.
+- Stage 2 fallback: query GraphQL `transaction(digest)` and read `transactionBcs`.
+- If both miss, raise an explicit `pruned/not found` error. Do not silently return null/empty success.
+- Log source (`grpc` or `graphql`) for observability.
 
 Reason:
 
 - Fullnode data can be pruned over time (older transactions might not be available through gRPC fullnodes).
-- GraphQL is indexer-backed and typically offers longer retention for historical transaction retrieval and complex query patterns.
-- Retention windows vary by operator, so age-based assumptions must be conservative.
+- GraphQL/indexer retention and availability are also operator-dependent and should not be assumed as infinite.
+- Dual-source fallback reduces single-endpoint failure risk for mixed-age digest workloads.
 
 ```typescript
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { SuiGraphQLClient } from '@mysten/sui/graphql';
+import { fromBase64 } from '@mysten/sui/utils';
 
 const grpcClient = new SuiGrpcClient({
   network: 'testnet',
@@ -267,21 +272,29 @@ async function fetchFromGraphQL(digest: string) {
   return { source: 'graphql', tx: r.data?.transaction ?? null };
 }
 
-async function loadTransactionByDigest(digest: string) {
-  // Default path for digest loading: GraphQL first.
+async function fetchTransactionBcs(digest: string) {
+  // Stage 1) gRPC for fresh/recent data.
   try {
-    return await fetchFromGraphQL(digest);
-  } catch {
-    // Optional fallback for temporary indexer lag on very fresh transactions.
-    // Do not remove GraphQL-first behavior.
     const result = await grpcClient.getTransaction({
       digest,
-      include: { bcs: true, effects: true },
+      include: { bcs: true },
     });
     const tx =
       result.$kind === 'Transaction' ? result.Transaction : result.FailedTransaction;
-    return { source: 'grpc-fallback', tx };
+    if (tx.bcs instanceof Uint8Array && tx.bcs.length > 0) {
+      return { source: 'grpc' as const, bcs: tx.bcs };
+    }
+  } catch {
+    // fall through
   }
+
+  // Stage 2) GraphQL fallback.
+  const gql = await fetchFromGraphQL(digest);
+  const bcs64 = gql.tx?.transactionBcs;
+  if (!bcs64) {
+    throw new Error(`Transaction not found/pruned across gRPC+GraphQL: ${digest}`);
+  }
+  return { source: 'graphql' as const, bcs: fromBase64(bcs64) };
 }
 ```
 
@@ -291,13 +304,17 @@ async function loadTransactionByDigest(digest: string) {
 > Official `SuiGraphQLClient` docs currently show both:
 > - mainnet example: `https://sui-mainnet.mystenlabs.com/graphql`
 > - testnet query example: `https://graphql.testnet.sui.io/graphql`
-> - Do not assume one fixed hostname pattern for every network. Verify endpoints from current official docs/release notes.
-> - Browser apps can hit CORS depending on environment; if needed, route GraphQL through your app/server proxy.
-> - Re-validation command example (save output in CI/logs when claiming verification):
->   `curl -sS https://graphql.testnet.sui.io/graphql -H "content-type: application/json" --data '{"query":"{ __type(name:\"Transaction\"){ fields { name } } }"}'`
+> - Many teams also use `https://graphql.<network>.sui.io/graphql` patterns in production.
+> - Do not assume one fixed hostname pattern for every network. Re-verify endpoint and CORS behavior in your runtime environment.
+> - Browser CORS validation example (preflight):
+>   `curl -sSI -X OPTIONS "<your-graphql-url>" -H "Origin: http://localhost:3000" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: content-type"`
+> - Migration review check: verify your `createGraphQLClient()` (or equivalent) mainnet URL is set to the endpoint that passes your browser preflight checks.
+>   If direct browser calls fail CORS, route GraphQL through your app/server proxy.
+> - Schema validation example for field name:
+>   `curl -sS "<your-graphql-url>" -H "content-type: application/json" --data '{"query":"{ __type(name:\"Transaction\"){ fields { name } } }"}'`
 >   Confirm `transactionBcs` exists.
-> - Re-validation command example for effects structure:
->   `curl -sS https://graphql.testnet.sui.io/graphql -H "content-type: application/json" --data '{"query":"{ __type(name:\"TransactionEffects\"){ fields { name } } }"}'`
+> - Re-validation example for effects structure:
+>   `curl -sS "<your-graphql-url>" -H "content-type: application/json" --data '{"query":"{ __type(name:\"TransactionEffects\"){ fields { name } } }"}'`
 >   Confirm `objectChanges` exists, then verify `nodes` through your concrete transaction query output.
 
 ### 4.7 Single vs Batch Object Reads
@@ -311,7 +328,7 @@ async function loadTransactionByDigest(digest: string) {
 
 > **Note**: `@mysten/dapp-kit-react` is a **separate package** from `@mysten/dapp-kit`. Having both installed simultaneously may cause conflicts.
 
-### 5.1 dapp-kit.ts — Configuration File
+### 5.1 dapp-kit.ts - Configuration File
 
 ```typescript
 import { createDAppKit } from '@mysten/dapp-kit-react';
@@ -336,7 +353,7 @@ declare module '@mysten/dapp-kit-react' {
 }
 ```
 
-### 5.2 App.tsx — Provider Replacement
+### 5.2 App.tsx - Provider Replacement
 
 ```diff
 - import { SuiClientProvider, WalletProvider } from '@mysten/dapp-kit';
@@ -428,7 +445,7 @@ const digest =
 
 ## 6. Event / Query Strategy
 
-Do not port legacy polling-based event queries as-is — redesign them.
+Do not port legacy polling-based event queries as-is - redesign them.
 
 - `SuiGrpcClient` (2.4.0) does not expose `subscribeEvents`
 - gRPC subscription exists at service level (`subscriptionService.subscribeCheckpoints`)
@@ -440,10 +457,10 @@ Do not port legacy polling-based event queries as-is — redesign them.
 ## 7. Infrastructure Checklist
 
 ```
-✅ gRPC endpoint — port 443, TLS, HTTP/2 required
-✅ LB/Nginx — enable grpc_pass or http2
-✅ Firewall — allow long-lived connections
-✅ ENV variables — update RPC URL to gRPC endpoint
+[OK] gRPC endpoint - port 443, TLS, HTTP/2 required
+[OK] LB/Nginx - enable grpc_pass or http2
+[OK] Firewall - allow long-lived connections
+[OK] ENV variables - update RPC URL to gRPC endpoint
 ```
 
 | Network | Endpoint |
@@ -460,7 +477,7 @@ Do not port legacy polling-based event queries as-is — redesign them.
 - Use `include: { objectTypes: true }` when you need object type information.
 - In gRPC/core result shapes, `objectChanges` is not a top-level field. Prefer `effects.changedObjects` first.
 - If `effects.changedObjects` is insufficient, add a follow-up digest query and leave a TODO.
-- For digest-based follow-up reads, keep GraphQL-first policy. Use `grpcClient.getTransaction(...)` only for explicit fallback or immediate post-submit workflows.
+- For digest-based follow-up reads, use a two-stage loader: gRPC `getTransaction(...)` first, then GraphQL fallback with explicit error when both miss.
 
 ---
 
@@ -469,7 +486,7 @@ Do not port legacy polling-based event queries as-is — redesign them.
 ```
 1. Replace backend code + stabilize compilation
 2. Replace frontend Provider / hooks
-3. staging E2E (simulate → execute → wallet sign)
+3. staging E2E (simulate -> execute -> wallet sign)
 4. Phased deployment (partial traffic)
 5. Full cutover, then remove all legacy 1.x-only code paths
 ```

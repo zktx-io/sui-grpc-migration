@@ -73,7 +73,7 @@ Read docs/sui-grpc-migration.md.
 Migrate all backend files detected in Step 2 based on section 4.
 - Never introduce `SuiJsonRpcClient` or imports from `@mysten/sui/jsonRpc`
 - If a path seems JSON-RPC-only, stop and mark it as `BLOCKER` + TODO (do not add fallback client)
-- For transaction loading code: any `getTransaction`-style digest loading must be GraphQL-first by default (no gRPC-only loader)
+- For transaction loading code: use two-stage digest loading (`gRPC getTransaction` first, then GraphQL fallback; no single-source loaders)
 - For post-deploy/post-execute confirmation in the same flow, use gRPC `waitForTransaction`
 - Show output as a diff
 - Do not guess at changed response type fields; mark unknown fields with TODO comments
@@ -88,7 +88,7 @@ Verify:
 - Legacy `devInspect` / `dryRun` patterns were migrated
 - `commandResults` consumers include `include: { commandResults: true }`
 - No forbidden JSON-RPC imports remain in backend outputs
-- Digest transaction loading is GraphQL-first by default
+- Digest transaction loading uses two-stage fallback (`gRPC -> GraphQL`) and explicit error when both miss
 - gRPC `waitForTransaction` is used for same-flow confirmation
 
 Step TODO:
