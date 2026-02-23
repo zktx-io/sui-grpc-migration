@@ -6,29 +6,61 @@ Policy enforcement gates are in `docs/policy-gates.md`.
 
 ## 0. Scope
 
-- Core track: `@mysten/sui` 1.x -> 2.x + dApp Kit migration
-- Optional track: `@mysten/walrus` / `@mysten/suins` 0.x -> 1.x
-- This run-order file defines scenario detection, case selection, and execution order.
-- Workflow style contract: keep copy/paste + single-prompt execution as default.
+Core track (universal):
+- `@mysten/sui` 1.x -> 2.x migration
+- dApp Kit -> dApp Kit React migration
 
-## 1. Project Policies (must hold in every case)
+Conditional track (selected by scenario):
+- `@mysten/walrus` / `@mysten/suins` 0.x -> 1.x
+- chain-fixed network exception (only with explicit rationale comment)
+- Gate F runtime validation (only when trigger conditions are met)
+
+This file defines scenario detection, case selection, and execution order.
+Workflow style contract: keep copy/paste + single-prompt execution as default.
+
+## 1. Core Policies (must hold in every case)
 
 - Do not introduce `SuiJsonRpcClient`.
 - Do not introduce imports from `@mysten/sui/jsonRpc`.
+- Legacy-detection keywords should be limited to 1.x-era symbols.
+- Post-migration quality gates may inspect 2.x loader patterns.
 - For digest-based transaction content loading, use a **two-stage loader** (`gRPC getTransaction` first, then GraphQL fallback with explicit error when both miss).
+- For shared digest loaders, keep network caller-driven (no module-scope fixed network literals).
+- In GraphQL fallback, check `errors` before reading `data`, and include network/stage in loader errors.
+- In GraphQL transaction queries, treat `effects` list fields as connection types and use `nodes`/`edges` access.
 - For same-flow submit confirmation (`waitForTransaction`), gRPC is allowed.
+- Unresolved `BLOCKER` items are fail state (no accepted-blocker shortcut).
 
-## 2. Scenario Detection
+## 2. Conditional Policies
+
+- If a flow is chain-fixed, hardcoded network is allowed only with explicit rationale in code comments.
+- When GraphQL query fields or two-stage byte loader behavior changes, Gate F runtime validation is required.
+- Walrus/SuiNS-specific checks apply only in Case B/C.
+
+## 3. Repository/Workspace Scope (monorepo-safe)
+
+Run this once before scenario detection:
+
+```bash
+# package manifests (single package + monorepo)
+rg --files . -g "**/package.json" -g "!**/node_modules/**" -g "!.git/**"
+```
+
+All scan/gate commands in this kit should use repository root `.` with explicit include/exclude globs:
+- include: `**/*.{ts,tsx,js,jsx,mjs,cjs,graphql,gql}` and `**/package.json`
+- exclude: `**/node_modules/**`, `.git/**`
+
+## 4. Scenario Detection
 
 Run this detection command first:
 
 ```bash
-rg "\"@mysten/walrus\"|\"@mysten/suins\"|new WalrusClient|new SuinsClient|\\$extend\\(walrus\\)|\\$extend\\(suins\\)" package.json src -g "package.json" -g "*.ts" -g "*.tsx" -g "*.js" -g "*.mjs"
+rg "\"@mysten/walrus\"|\"@mysten/suins\"|new WalrusClient|new SuinsClient|\\$extend\\(walrus\\)|\\$extend\\(suins\\)" . -g "**/package.json" -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
 ```
 
-Then inspect `package.json` for intended `@mysten/sui` major version.
+Then inspect matched package manifests for intended `@mysten/sui` major version.
 
-## 3. Case Selection
+## 5. Case Selection
 
 ### Case A: Sui-only migration
 
@@ -77,21 +109,21 @@ Execution order:
 Post-run recommendation (all cases):
 - Run Step 6 (final audit) from `docs/migration-step-prompts.md` as a separate prompt.
 
-## 4. Integration Gates (Case B/C)
+## 6. Integration Gates (Case B/C)
 
 Run these checks after Optional Step C and before final validation:
 
 ```bash
-rg "SuiJsonRpcClient|@mysten/sui/jsonRpc|getJsonRpcFullnodeUrl" src
-rg "new WalrusClient|new SuinsClient|@mysten/sui/client|getFullnodeUrl|@mysten/sui/experimental" src
+rg "SuiJsonRpcClient|@mysten/sui/jsonRpc" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
+rg "new WalrusClient|new SuinsClient|@mysten/sui/client|getFullnodeUrl|@mysten/sui/experimental" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
 ```
 
 If any match remains:
 - Keep migration status as incomplete
 - Add `BLOCKER` + TODO
-- Continue only after explicit fix or accepted blocker
+- Continue only after explicit fix
 
-## 5. One-Prompt Mode (Confirm-only)
+## 7. One-Prompt Mode (Confirm-only)
 
 Paste this into your AI agent when you want one continuous run:
 
@@ -99,6 +131,7 @@ Paste this into your AI agent when you want one continuous run:
 Read docs/migration-run-order.md and docs/migration-step-prompts.md.
 
 Do the migration end-to-end with minimal user interruption:
+- Detect workspace/package scope first (single repo + monorepo).
 - Auto-detect scenario (Case A/B/C) using the detection command in migration-run-order.md.
 - Execute exact step order for that case.
 - Run validation gates and per-step reports exactly as defined.
@@ -118,7 +151,7 @@ Final output:
 6. blockers/TODOs
 ```
 
-## 6. Required Step Report Format (every step)
+## 8. Required Step Report Format (every step)
 
 Each completed step must output:
 1. step name + completion status

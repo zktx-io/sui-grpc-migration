@@ -64,7 +64,7 @@ rg "@mysten/dapp-kit['\"]" src -g "*.ts" -g "*.tsx"
 rg "devInspectTransactionBlock|dryRunTransactionBlock|queryEvents|queryTransactionBlocks|multiGetTransactionBlocks|getOwnedObjects|multiGetObjects|getCoins" src
 
 # Disallow in migrated output
-rg "SuiJsonRpcClient|@mysten/sui/jsonRpc|getJsonRpcFullnodeUrl" src -g "*.ts" -g "*.tsx"
+rg "SuiJsonRpcClient|@mysten/sui/jsonRpc" src -g "*.ts" -g "*.tsx"
 
 # Legacy frontend hook traces
 rg "useSignAndExecuteTransaction|useSuiClient" src -g "*.ts" -g "*.tsx"
@@ -103,9 +103,12 @@ npm uninstall @tanstack/react-query
 > In `@mysten/dapp-kit-react` 1.x, internal React state hooks are implemented with `nanostores` (`useStore`) rather than React Query hooks.
 
 React Query decision contract:
-- If direct imports are present, keep `@tanstack/react-query` and report matched files.
-- If direct imports are absent, remove `@tanstack/react-query` from manifests/lockfiles.
-- Do not keep unused `@tanstack/react-query` after migration.
+- Step 1: if no direct imports exist, remove `@tanstack/react-query` from manifests/lockfiles.
+- Step 2: if direct imports exist, run hook-level triage.
+  - if `useQuery`/`useMutation`/`useInfiniteQuery`/`useQueryClient` (or similar hooks) are used, keep dependency and report usage files.
+  - if only `QueryClientProvider`/`QueryClient` wrappers remain, treat as possible legacy peer-dep residue from old `@mysten/dapp-kit`.
+- Step 3: if wrapper-only and old `@mysten/dapp-kit` is removed while `@mysten/dapp-kit-react` is present, remove wrapper code, rerun import scan, then remove `@tanstack/react-query` when clean.
+- Rule: import presence alone is not sufficient proof of active dependency need.
 
 ## 4. Backend Migration (Node.js)
 
@@ -216,6 +219,12 @@ Rules:
 - Do not ship single-source digest loaders (gRPC-only or GraphQL-only) for verification paths.
 - Stage 1: call gRPC `getTransaction({ digest, include: { bcs: true } })`.
 - Stage 2 fallback: query GraphQL `transaction(digest)` and read `transactionBcs`.
+- Keep loader network caller-driven (`network` parameter or equivalent context), not fixed module-scope literal.
+- If flow semantics are chain-fixed, explicit hardcoded network is allowed only with a short rationale comment.
+- Do not use deployment-target config as implicit chain-verification context unless explicitly intended.
+- In GraphQL fallback, check `response.errors` before reading `response.data`.
+- Treat GraphQL `effects.objectChanges` / `effects.balanceChanges` as connection fields and read items via `nodes`/`edges`.
+- Include `network` and failed stage (`grpc`/`graphql`) in thrown loader errors.
 - If both miss, raise an explicit `pruned/not found` error. Do not silently return null/empty success.
 - Log source (`grpc` or `graphql`) for observability.
 
@@ -225,20 +234,44 @@ Reason:
 - GraphQL/indexer retention and availability are also operator-dependent and should not be assumed as infinite.
 - Dual-source fallback reduces single-endpoint failure risk for mixed-age digest workloads.
 
+False-negative traps (static checks may miss):
+
+1. GraphQL field-name mismatch can pass `tsc`.
+   - `SuiGraphQLClient.query<Result>()` uses developer-declared generics; it does not validate query-string fields against schema.
+   - Example mismatch class: gRPC `Transaction.bcs` vs GraphQL `Transaction.transactionBcs`.
+   - Mitigation: schema introspection + query smoke checks (Gate F), and always check `response.errors`.
+
+2. Multi-source byte-format assumptions can break at runtime.
+   - Both branches may produce byte arrays, but source contracts can differ.
+   - Do not apply unconditional shared offsets (for example blind `slice(4)`) across gRPC and GraphQL paths.
+   - Mitigation: source-aware normalization contract + runtime tests for both branches (Gate F).
+
 ```typescript
 import { SuiGrpcClient } from '@mysten/sui/grpc';
 import { SuiGraphQLClient } from '@mysten/sui/graphql';
 import { fromBase64 } from '@mysten/sui/utils';
 
-const grpcClient = new SuiGrpcClient({
-  network: 'testnet',
-  baseUrl: 'https://fullnode.testnet.sui.io:443',
-});
+type Network = 'mainnet' | 'testnet' | 'devnet';
 
-const gqlClient = new SuiGraphQLClient({
-  network: 'testnet',
-  url: 'https://graphql.testnet.sui.io/graphql',
-});
+const GRPC_URLS: Record<Network, string> = {
+  mainnet: 'https://fullnode.mainnet.sui.io:443',
+  testnet: 'https://fullnode.testnet.sui.io:443',
+  devnet: 'https://fullnode.devnet.sui.io:443',
+};
+
+const GQL_URLS: Record<Network, string> = {
+  mainnet: 'https://graphql.mainnet.sui.io/graphql',
+  testnet: 'https://graphql.testnet.sui.io/graphql',
+  devnet: 'https://graphql.devnet.sui.io/graphql',
+};
+
+function createGrpcClient(network: Network) {
+  return new SuiGrpcClient({ network, baseUrl: GRPC_URLS[network] });
+}
+
+function createGraphQLClient(network: Network) {
+  return new SuiGraphQLClient({ network, url: GQL_URLS[network] });
+}
 
 const GET_TX_QUERY = `
   query GetTransaction($digest: String!) {
@@ -254,7 +287,8 @@ const GET_TX_QUERY = `
 
 // Post-submit confirmation path (not historical loading):
 // Prefer gRPC wait in the same execution/publish workflow.
-async function executeAndConfirm(txBytes: Uint8Array, signature: string) {
+async function executeAndConfirm(network: Network, txBytes: Uint8Array, signature: string) {
+  const grpcClient = createGrpcClient(network);
   const exec = await grpcClient.executeTransaction({
     transaction: txBytes,
     signatures: [signature],
@@ -269,7 +303,8 @@ async function executeAndConfirm(txBytes: Uint8Array, signature: string) {
   });
 }
 
-async function fetchFromGraphQL(digest: string) {
+async function fetchFromGraphQL(network: Network, digest: string) {
+  const gqlClient = createGraphQLClient(network);
   const r = await gqlClient.query<
     { transaction: { digest: string; transactionBcs: string } | null },
     { digest: string }
@@ -277,10 +312,18 @@ async function fetchFromGraphQL(digest: string) {
     query: GET_TX_QUERY,
     variables: { digest },
   });
+  if (r.errors?.length) {
+    throw new Error(
+      `[loader][graphql] errors (network=${network}, digest=${digest}): ${JSON.stringify(r.errors)}`
+    );
+  }
   return { source: 'graphql', tx: r.data?.transaction ?? null };
 }
 
-async function fetchTransactionBcs(digest: string) {
+async function fetchTransactionBcs(network: Network, digest: string) {
+  const grpcClient = createGrpcClient(network);
+  let grpcReason: unknown = 'miss';
+
   // Stage 1) gRPC for fresh/recent data.
   try {
     const result = await grpcClient.getTransaction({
@@ -292,15 +335,21 @@ async function fetchTransactionBcs(digest: string) {
     if (tx.bcs instanceof Uint8Array && tx.bcs.length > 0) {
       return { source: 'grpc' as const, bcs: tx.bcs };
     }
-  } catch {
+    grpcReason = 'empty bcs';
+  } catch (e) {
+    grpcReason = e;
     // fall through
   }
 
   // Stage 2) GraphQL fallback.
-  const gql = await fetchFromGraphQL(digest);
+  const gql = await fetchFromGraphQL(network, digest);
   const bcs64 = gql.tx?.transactionBcs;
   if (!bcs64) {
-    throw new Error(`Transaction not found/pruned across gRPC+GraphQL: ${digest}`);
+    throw new Error(
+      `[loader] transaction not found/pruned (network=${network}, digest=${digest}) after grpc->graphql fallback; grpc=${String(
+        grpcReason
+      )}, graphql=null`
+    );
   }
   return { source: 'graphql' as const, bcs: fromBase64(bcs64) };
 }
@@ -324,6 +373,9 @@ async function fetchTransactionBcs(digest: string) {
 > - Re-validation example for effects structure:
 >   `curl -sS "<your-graphql-url>" -H "content-type: application/json" --data '{"query":"{ __type(name:\"TransactionEffects\"){ fields { name } } }"}'`
 >   Confirm `objectChanges` exists, then verify `nodes` through your concrete transaction query output.
+> - Connection-shape reminder:
+>   `objectChanges { outputState { ... } }` is invalid on connection types.
+>   Use `objectChanges { nodes { outputState { ... } } }` (or `edges { node { ... } }`).
 
 ### 4.7 Single vs Batch Object Reads
 
@@ -486,6 +538,8 @@ Do not port legacy polling-based event queries as-is - redesign them.
 - In gRPC/core result shapes, `objectChanges` is not a top-level field. Prefer `effects.changedObjects` first.
 - If `effects.changedObjects` is insufficient, add a follow-up digest query and leave a TODO.
 - For digest-based follow-up reads, use a two-stage loader: gRPC `getTransaction(...)` first, then GraphQL fallback with explicit error when both miss.
+- For shared digest loaders, pass network from caller context and avoid module-scope fixed network literals.
+- For GraphQL fallback, check `response.errors` and include `network` + failing stage in loader errors.
 
 ---
 

@@ -148,7 +148,7 @@ For Walrus/SuiNS migration output:
 2. Upgrade @mysten/walrus and @mysten/suins to 1.x.
 3. Replace direct legacy client imports/constructors.
 4. Switch call sites to client.$extend(walrus()) / client.$extend(suins()).
-5. Run `rg "SuiJsonRpcClient|@mysten/sui/jsonRpc|getJsonRpcFullnodeUrl" src` and ensure no matches remain.
+5. Run `rg "SuiJsonRpcClient|@mysten/sui/jsonRpc" src` and ensure no matches remain.
 6. Run typecheck/build/test and fix remaining blockers.
 ```
 
