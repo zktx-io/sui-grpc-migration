@@ -16,6 +16,7 @@ sui-grpc-migration/
 - docs/
   - migration-run-order.md      <- scenario detection + execution order
   - migration-step-prompts.md   <- Step 1~5 and Optional A~D prompt blocks
+  - policy-gates.md             <- machine-verifiable migration policy gates
   - sui-grpc-migration.md       <- Sui SDK migration reference (API details)
   - walrus-suins-migration.md   <- Walrus/SuiNS migration reference (optional track)
 - agents/
@@ -38,6 +39,7 @@ Run migration end-to-end in one pass (no step-by-step confirmation).
 Read first:
 - docs/migration-run-order.md
 - docs/migration-step-prompts.md
+- docs/policy-gates.md
 - docs/sui-grpc-migration.md
 - docs/walrus-suins-migration.md (only if Walrus/SuiNS is detected)
 
@@ -51,6 +53,8 @@ Read first:
 2) Execute exact step order for selected case from docs/migration-run-order.md.
 
 3) For each step, use the exact prompt/checklist from docs/migration-step-prompts.md and execute immediately.
+
+3.1) Apply policy gates from docs/policy-gates.md after each migration phase and in final validation.
 
 4) Do not stop between normal steps. Ask only when:
 - permission/escalation is required
@@ -79,6 +83,11 @@ Final output format:
 5. validation results
 6. blockers/TODOs
 ```
+
+Execution contract:
+- This repository is designed for copy/paste usage.
+- Keep one-shot prompt execution as the primary workflow.
+- Added policy gates are internal checks run by the agent in the same flow, not an extra user workflow.
 
 ## Manual Mode (if needed)
 

@@ -1,6 +1,7 @@
 # Migration Step Prompts
 
 Use these prompts with the execution order selected in `docs/migration-run-order.md`.
+Run policy checks from `docs/policy-gates.md` after each migration phase.
 
 ## Step 1 - Copy migration docs/rules
 
@@ -187,6 +188,9 @@ Step report:
 3. pass/fail status per command
 4. fixed issues summary
 5. remaining blockers + reproduction
+
+Policy gate reminder:
+- Run mandatory checks from `docs/policy-gates.md` and include pass/fail in this step report.
 
 ## Optional Step A - Copy Walrus/SuiNS guide
 

@@ -2,12 +2,14 @@
 
 Use this file to decide **execution order** before running any migration step.
 Detailed step prompts are in `docs/migration-step-prompts.md`.
+Policy enforcement gates are in `docs/policy-gates.md`.
 
 ## 0. Scope
 
 - Core track: `@mysten/sui` 1.x -> 2.x + dApp Kit migration
 - Optional track: `@mysten/walrus` / `@mysten/suins` 0.x -> 1.x
 - This run-order file defines scenario detection, case selection, and execution order.
+- Workflow style contract: keep copy/paste + single-prompt execution as default.
 
 ## 1. Project Policies (must hold in every case)
 
