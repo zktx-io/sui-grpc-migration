@@ -74,6 +74,7 @@ Execution order:
 3. Step 3
 4. Step 4
 5. Step 5
+6. Optional Step E (post-migration DRY: consolidate duplicate constants and factories)
 
 ### Case B: Sui + Walrus/SuiNS together
 
@@ -88,10 +89,11 @@ Execution order:
 4. Optional Step A
 5. Optional Step B
 6. Optional Step C
-7. Step 3 (rerun once for shared backend integration drift)
+7. Step 3 (rerun: check that Optional A-C changes did not introduce drift in shared backend files — gRPC loader patterns, client setup, imports)
 8. Step 4
 9. Optional Step D
 10. Step 5
+11. Optional Step E (post-migration DRY: consolidate duplicate constants and factories)
 
 ### Case C: Sui 2.x already done, Walrus/SuiNS-only migration
 
@@ -105,8 +107,10 @@ Execution order:
 3. Optional Step C
 4. Optional Step D
 5. Step 5
+6. Optional Step E (post-migration DRY: consolidate duplicate constants and factories)
 
 Post-run recommendation (all cases):
+- Run Optional Step E from `docs/migration-step-prompts.md` to consolidate any duplicate constants/factories.
 - Run Step 6 (final audit) from `docs/migration-step-prompts.md` as a separate prompt.
 
 ## 6. Integration Gates (Case B/C)

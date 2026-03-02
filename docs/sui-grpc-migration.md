@@ -55,22 +55,23 @@ Reference: https://sdk.mystenlabs.com/sui/clients/grpc
 
 Run the following to identify files that need migration.
 
+All commands scan from repository root `.` with explicit include/exclude globs
+(monorepo-safe: works for `src/`, `app/`, `server/`, `lib/`, etc. without modification).
+
 ```bash
 # Legacy dapp-kit traces
 # @mysten/dapp-kit['"] - matches both quote styles, avoids false-positives on dapp-kit-react
-rg "@mysten/dapp-kit['\"]" src -g "*.ts" -g "*.tsx"
+rg "@mysten/dapp-kit['\"]" . -g "**/*.{ts,tsx}" -g "!**/node_modules/**" -g "!.git/**"
 
 # Backend migration traces (1.x -> 2.x)
-rg "devInspectTransactionBlock|dryRunTransactionBlock|queryEvents|queryTransactionBlocks|multiGetTransactionBlocks|getOwnedObjects|multiGetObjects|getCoins" src
+rg "devInspectTransactionBlock|dryRunTransactionBlock|queryEvents|queryTransactionBlocks|multiGetTransactionBlocks|getOwnedObjects|multiGetObjects|getCoins" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
 
 # Disallow in migrated output
-rg "SuiJsonRpcClient|@mysten/sui/jsonRpc" src -g "*.ts" -g "*.tsx"
+rg "SuiJsonRpcClient|@mysten/sui/jsonRpc" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
 
 # Legacy frontend hook traces
-rg "useSignAndExecuteTransaction|useSuiClient" src -g "*.ts" -g "*.tsx"
+rg "useSignAndExecuteTransaction|useSuiClient" . -g "**/*.{ts,tsx}" -g "!**/node_modules/**" -g "!.git/**"
 ```
-
-> **Monorepo / non-standard layout** (`app/`, `server/`, `lib/`, etc.): replace `src` with your actual source directory.
 
 ---
 

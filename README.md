@@ -29,6 +29,17 @@ sui-grpc-migration/
 git clone https://github.com/zktx-io/sui-grpc-migration.git
 ```
 
+Then inject the migration rules into your **target project's** AI rules file.
+Copy (or append) `agents/sui-grpc-rules.md` to the path for your AI tool:
+
+| Tool | Target project path |
+|---|---|
+| Cursor | `.cursor/rules/sui-grpc.md` |
+| Claude Code | `CLAUDE.md` |
+| Codex / Gemini / general | `AGENTS.md` |
+
+This is **Step 1** of the migration (see `docs/migration-step-prompts.md`). Once the rules are in place, the agent will automatically follow migration policy throughout the session.
+
 ## Scope Model (Core vs Conditional)
 
 Core (universal, always apply):
@@ -169,8 +180,7 @@ Important:
 Execution contract:
 - This repository is designed for copy/paste usage.
 - Keep one-shot prompt execution as the primary workflow.
-- Added policy gates are internal checks run by the agent in the same flow, not an extra user workflow.
-- For reliability, run final audit (Step 6) as a separate second prompt after the main flow.
+- Policy gates are internal checks run by the agent in the same flow, not an extra user step.
 - The same one-shot prompt supports both single-package repos and monorepos.
 
 ## Final Audit (separate prompt, recommended)
@@ -198,11 +208,3 @@ Output:
 1. Open `docs/migration-run-order.md` and select Case A/B/C.
 2. Open `docs/migration-step-prompts.md` and execute each step prompt in that order.
 3. Use `docs/sui-grpc-migration.md` and `docs/walrus-suins-migration.md` as API truth references.
-
-## AI Rules File Path
-
-| Tool | Path |
-|---|---|
-| Cursor | `.cursor/rules/sui-grpc.md` |
-| Claude Code | `CLAUDE.md` |
-| Codex / Gemini / general | `AGENTS.md` |

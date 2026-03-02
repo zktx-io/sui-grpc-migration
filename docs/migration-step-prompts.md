@@ -24,15 +24,18 @@ Copy these two items:
    -> {your project root}/docs/sui-grpc-migration.md
 
 2. sui-grpc-migration/agents/sui-grpc-rules.md contents
-   -> append to {your project root}/AGENTS.md (create if missing)
-   -> if using Cursor, also copy to .cursor/rules/sui-grpc.md
+   -> copy to the path that matches your AI tool:
+      - Cursor:              .cursor/rules/sui-grpc.md  (primary)
+      - Claude Code:         CLAUDE.md
+      - Codex / Gemini / general: AGENTS.md
+   -> if multiple agents share the same project, append to each applicable path
 
 Report the actual paths created when done.
 ```
 
 Verify:
 - `docs/sui-grpc-migration.md` exists in target project
-- `AGENTS.md` or `.cursor/rules/sui-grpc.md` contains Sui migration rules
+- the AI rules file for your tool (`.cursor/rules/sui-grpc.md`, `CLAUDE.md`, or `AGENTS.md`) contains Sui migration rules
 
 Step TODO:
 - [ ] Step 1 prompt executed
@@ -247,7 +250,66 @@ Step report:
 Policy gate reminder:
 - Run mandatory checks from `docs/policy-gates.md` and include pass/fail in this step report.
 
+## Optional Step E - Consolidate shared constants and factories (post-migration DRY)
+
+Run this after Step 5 passes and before Step 6 audit.
+Apply only when the migration introduced duplicate constant declarations or factory functions across files.
+
+Paste into AI agent:
+
+```text
+Scan the migrated codebase for duplicate constant declarations and factory functions introduced during migration.
+
+Target patterns:
+1. GRPC_URLS / GQL_URLS declared in more than one file with overlapping network keys
+2. Network type declared in more than one file
+3. createGrpcClient / createGraphQLClient functions with equivalent logic in more than one file
+4. Inline hardcoded gRPC baseUrl strings (e.g. 'https://fullnode.testnet.sui.io:443') scattered across multiple files
+   instead of referencing a shared constant
+
+Scan command:
+rg "GRPC_URLS|GQL_URLS|createGrpcClient|createGraphQLClient|fullnode\.(mainnet|testnet|devnet)\.sui\.io" \
+   . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**" -n
+
+Steps:
+1. Report each duplicate group: symbol name, files where it appears, and whether values are identical.
+2. For each confirmed duplicate, propose a shared module path (e.g. lib/sui-client.ts, lib/network.ts, or equivalent).
+3. Move the canonical declaration to the shared module and replace all other occurrences with imports.
+4. Do not consolidate if values differ between files (e.g. different network sets) — mark as TODO for manual review.
+5. Run typecheck after consolidation.
+
+Output:
+1. duplicate groups found (symbol, files, values)
+2. shared module path(s) created
+3. per-file diff
+4. typecheck result
+```
+
+Verify:
+- No remaining duplicate declarations for consolidated symbols
+- All import sites resolve correctly
+- typecheck passes after consolidation
+
+Step TODO (optional):
+- [ ] Optional Step E prompt executed
+- [ ] duplicate groups reported
+- [ ] shared module(s) created
+- [ ] typecheck passes
+
+Step report:
+1. step name + completion status
+2. consolidated symbol list
+3. shared module path(s)
+4. per-file diff summary
+5. typecheck result
+
 ## Step 6 - Final Independent Audit (run as separate prompt)
+
+> **Why a separate prompt?**
+> - **Context window fatigue**: a long migration run accumulates 10,000+ tokens of prior edits. By the time the audit runs, the model's attention to early decisions is diluted.
+> - **Context contamination**: the agent that performed the migration shares the same "memory" of its own decisions, making it less likely to catch self-introduced errors.
+> - **Audit independence**: a fresh prompt re-reads doc and code independently, treating the migrated output as a black box — the same way a human reviewer would pick up someone else's PR.
+> - **Reliability**: empirically, gate findings (missed `BLOCKER`s, GraphQL connection-shape regressions) are more reliably caught in a clean context.
 
 Use this as a separate second prompt after the main migration flow completes.
 

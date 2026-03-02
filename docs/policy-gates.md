@@ -24,11 +24,10 @@ Conditional gates:
 - Gate F only when GraphQL query fields or multi-source digest loader byte behavior changed.
 
 ```bash
+# === Core gates (always run) ===
+
 # Gate A: no forbidden JSON-RPC path in migrated code
 rg "SuiJsonRpcClient|@mysten/sui/jsonRpc" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
-
-# Gate B: no legacy Walrus/SuiNS client construction (when optional track applies)
-rg "new WalrusClient|new SuinsClient|@mysten/sui/client|getFullnodeUrl|@mysten/sui/experimental" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
 
 # Gate C: React Query direct usage detection
 rg "from ['\"]@tanstack/react-query['\"]|require\\(['\"]@tanstack/react-query['\"]\\)" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
@@ -54,6 +53,11 @@ rg -n -P "new\\s+SuiGraphQLClient\\(\\s*\\{[\\s\\S]{0,240}?network\\s*:\\s*['\\\
 rg -n -U -P "objectChanges\\s*\\{\\s*(?!nodes\\b|edges\\b|\\.\\.\\.)" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs,graphql,gql}" -g "!**/node_modules/**" -g "!.git/**"
 rg -n -U -P "balanceChanges\\s*\\{\\s*(?!nodes\\b|edges\\b|\\.\\.\\.)" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs,graphql,gql}" -g "!**/node_modules/**" -g "!.git/**"
 
+# === Conditional gates (run only when applicable) ===
+
+# Gate B: no legacy Walrus/SuiNS client construction (when optional track applies)
+rg "new WalrusClient|new SuinsClient|@mysten/sui/client|getFullnodeUrl|@mysten/sui/experimental" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
+
 # Gate F trigger detector (conditional runtime gate)
 rg -n "transactionBcs|transaction\\s*\\(digest:|getTransaction\\(|SuiGraphQLClient|query\\s*:\\s*`" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs,graphql,gql}" -g "!**/node_modules/**" -g "!.git/**"
 ```
@@ -69,6 +73,21 @@ Pass criteria:
       - if only provider/wrapper patterns are present and legacy `@mysten/dapp-kit` is removed while `@mysten/dapp-kit-react` is present:
         treat as vestigial peer-dep wrapper, remove wrapper code, rerun Gate C, then remove `@tanstack/react-query` if clean
       - otherwise mark as `BLOCKER` for manual review (import exists but non-hook usage is unclear)
+
+Gate C decision flowchart:
+
+```mermaid
+flowchart TD
+    A(["Gate C: run rg for @tanstack/react-query imports"]) --> B{"Source matches found?"}
+    B -- No --> C["Remove @tanstack/react-query from manifests ✅"]
+    B -- Yes --> D["Gate C.2: run rg for hook usage\n(useQuery / useMutation / useInfiniteQuery / useQueryClient …)"]
+    D --> E{"Hook usage found?"}
+    E -- Yes --> F["Keep dependency\nReport matched files + hook names ✅"]
+    E -- No --> G["Gate C.3: check QueryClientProvider / new QueryClient patterns\nGate C.4: check dapp-kit vs dapp-kit-react in package.json"]
+    G --> H{"Provider/wrapper only\n+ old dapp-kit removed\n+ dapp-kit-react present?"}
+    H -- Yes --> I["Remove vestigial wrapper code\nRerun Gate C → if clean, remove dependency ✅"]
+    H -- No --> J["BLOCKER: import exists but usage unclear\nManual review required ❌"]
+```
 - Gate D decision:
   - Gate D matches require triage; unresolved matches are fail state.
   - For digest-based loaders, hardcoded literal network in client instantiation is a `BLOCKER` unless it is a documented chain-fixed flow with explicit rationale in code.
