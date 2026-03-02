@@ -207,6 +207,31 @@ for (const obj of objects) {
 
 Anti-pattern: `new Uint8Array(inputs[0].Pure.bytes)` silently produces wrong bytes — `Pure.bytes` is a base64 string, not a byte array (*verified: Transaction.d.mts line 120–122*).
 
+**Critical — all Pure inputs are indistinguishable at the `getData()` level:**
+
+In 1.x (`showInput: true` JSON-RPC), `type: 'pure'` inputs included SDK-level type context that allowed filtering to a specific pure type (e.g. bool vs. address vs. `vector<u8>`).
+
+In 2.x `Transaction.from(bcs).getData()`, every pure input — `bool`, `address`, `vector<u8>`, or any other BCS-serialized value — has exactly the same shape: `{ $kind: 'Pure', Pure: { bytes: '<base64>' } }`. There is no type discriminator. The BCS payload alone determines what the value is.
+
+Consequence: filtering by `$kind === 'Pure'` alone matches all pure inputs including address inputs. Attempting to BCS-parse an address as `vector<u8>` (or any other wrong type) silently produces garbled data or a parse error at runtime.
+
+Correct 2.x pattern — use BCS parse success as the filter:
+
+```typescript
+const inputs = tx.getData().inputs;
+for (const input of inputs) {
+  if (input.$kind !== 'Pure') continue;
+  try {
+    const value = bcs.vector(bcs.u8()).parse(fromBase64(input.Pure.bytes));
+    // handle vector<u8>
+  } catch {
+    // not a vector<u8> — skip or handle as different type
+  }
+}
+```
+
+
+
 
 
 ### 4.4 JSON-RPC `options` -> Core API `include` Mapping
