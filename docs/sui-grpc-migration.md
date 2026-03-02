@@ -160,10 +160,53 @@ const exec = await client.executeTransaction({
 | `multiGetObjects` | `client.getObjects` |
 | `getOwnedObjects` | `client.listOwnedObjects` |
 | `getTransactionBlock` (digest loading) | Two-stage loader: gRPC `getTransaction` first, then GraphQL fallback; avoid single-source loaders |
+| `queryTransactionBlocks` | **Not available on `SuiGrpcClient` — GraphQL only.** Use `address(address).transactions(last: N)`. Address-scoped index is faster than the global `transactions(filter:{affectedAddress})` index. |
 | `queryEvents` / `queryTransactionBlocks` | GraphQL-first (especially long-term/unknown-age data) |
 
 > `executeTransactionBlock` remains on legacy JSON-RPC client paths and is not a `SuiGrpcClient` method.
 > Note: official gRPC docs may still show `getCoins` in some examples. On `@mysten/sui@2.4.0`, use `listCoins` per installed SDK types.
+
+> **`queryTransactionBlocks` is not available on `SuiGrpcClient`** (*verified: not in grpc/client.d.mts*). For address-based transaction discovery use GraphQL:
+> ```graphql
+> # Prefer: address-scoped index (faster, uses per-address index)
+> { address(address: "0x...") { transactions(last: 20) { nodes { digest } } } }
+> # Avoid: global filter scan (slower, uses global affectedAddress index)
+> { transactionBlocks(filter: { affectedAddress: "0x..." }) { nodes { digest } } }
+> ```
+
+> **Breaking change — `Transaction.getData().inputs` shape:**
+> 1.x `data.transaction.inputs[0]` → `{ type: 'pure', value: number[] }` and `bcs.Bool.parse(new Uint8Array(inputs[0].value))`
+> 2.x `getData().inputs[0]` → `{ $kind: 'Pure', Pure: { bytes: string } }` (`bytes` is base64-encoded).
+> Migration:
+> ```typescript
+> // 1.x
+> if (tx.inputs[0].type !== 'pure') throw ...
+> bcs.Bool.parse(new Uint8Array(tx.inputs[0].value))
+> // 2.x
+> const inputs = tx.getData().inputs;
+> if (inputs[0].$kind !== 'Pure') throw ...
+> bcs.bool().parse(fromBase64(inputs[0].Pure.bytes))  // bytes is base64, not Uint8Array
+> ```
+> Note: `bcs.Bool` (1.x static) → `bcs.bool()` (2.x function). `Pure.bytes` is a base64 `string` (*verified: Transaction.d.mts line 120–122*); `new Uint8Array(inputs[0].Pure.bytes)` is an anti-pattern that silently produces wrong bytes — always use `fromBase64(inputs[0].Pure.bytes)` instead.
+
+> **Breaking change — `getObjects` return type is `(Object | Error)[]`:**
+> 1.x `multiGetObjects` raised or returned error fields per-item; callers often treated the array as all-valid.
+> 2.x `client.getObjects()` returns a mixed array where any element can be an `Error` instance (not-found or fetch failure).
+> Silently skipping `Error` items produces a count mismatch that is invisible to the caller — for example 10 objects requested, 8 returned, 2 errors dropped → caller sees 8 and assumes success.
+>
+> Anti-pattern: `'objectId' in obj` returns `true` even for `Error` objects if an `objectId` property happens to exist, or may pass through in JS without throwing — do not use field-presence as an error guard.
+>
+> Required pattern:
+> ```typescript
+> const { objects } = await client.getObjects({ objectIds, include: { json: true } });
+> for (const obj of objects) {
+>   if (obj instanceof Error) {
+>     throw obj; // or collect and surface to caller — do not silently skip
+>   }
+>   // safe to access obj.json, obj.objectId, etc.
+> }
+> ```
+
 
 ### 4.4 JSON-RPC `options` -> Core API `include` Mapping
 
@@ -383,7 +426,7 @@ async function fetchTransactionBcs(network: Network, digest: string) {
 ```
 
 > Operational note: if your project parses transaction bytes manually, use `Transaction.from(rawBytes)` directly — do not add byte-offset logic.
-> **Byte format changed between SDK versions**: Sui 1.x JSON-RPC `rawTransaction` was BCS-encoded `SenderSignedData` including a 4-byte prefix (`[0x01,0x00,0x00,0x00]`). Sui 2.x gRPC `tx.bcs` and GraphQL `transactionBcs` are pure `TransactionData` bytes with no prefix. Any `slice(4)` applied to `rawTransaction` must be removed.
+> **Byte format changed between SDK versions**: Sui 1.x JSON-RPC `rawTransaction` was BCS-encoded `SenderSignedData` including a 4-byte prefix (`[0x01,0x00,0x00,0x00]`). Sui 2.x gRPC `tx.bcs` and GraphQL `transactionBcs` are pure `TransactionData` bytes with no prefix. Any `slice(4)` applied to `rawTransaction` must be removed — **this applies equally to the GraphQL fallback path**: `transactionBcs` from GraphQL also has no prefix and must not be sliced.
 > `Transaction.from(...)` accepts `Uint8Array` directly (gRPC `tx.bcs`) or a base64-encoded string (GraphQL `transactionBcs`). Both are valid: the SDK handles `fromBase64` internally when given a string. The code examples in this guide use `fromBase64(bcs64)` before passing to produce `Uint8Array` — either approach is correct.
 > Official `SuiGraphQLClient` docs currently show both:
 > - mainnet example: `https://sui-mainnet.mystenlabs.com/graphql`
@@ -513,20 +556,24 @@ const result = await dAppKit.signAndExecuteTransaction({ transaction });
 ### 5.4 Common Frontend API Mismatches (Validated)
 
 - There is no `useDisconnectWallet` hook in `@mysten/dapp-kit-react`. Use `await dAppKit.disconnectWallet()` instead.
-- `ConnectModal` does not provide a `trigger` prop in `@mysten/dapp-kit-react`.
-- Use `ConnectButton` as the default trigger surface.
-- Prefer `ConnectModal` `open` prop for direct control in React.
-- `show()` / `close()` are Web Component methods on `DAppKitConnectModal`, but are not explicitly exposed as a typed React ref API in `@mysten/dapp-kit-react`; treat ref-method use as runtime-verified only.
-- `dAppKit.network` does not exist. Use `dAppKit.networks` for supported networks and `useCurrentNetwork()` for the current network.
+- `ConnectModal` does not expose a `trigger` prop as a typed React API (*verified: `ComponentProps<ReactWebComponent<DAppKitConnectModal, {}>>` — no trigger in type surface*). Use `ConnectButton` as the default trigger surface, or control `ConnectModal` via the `open` prop.
+- `show()` / `close()` are Web Component methods on `DAppKitConnectModal`, not typed React ref APIs in `@mysten/dapp-kit-react`; treat ref-method use as runtime-verified only.
+- `dAppKit.network` does not exist.
+  - `dAppKit.networks` → **array of supported networks** (not the current network).
+  - Current network in React: `useCurrentNetwork()` hook (*verified: exported from `dapp-kit-react/dist/index.d.mts`*).
+  - Current network outside React: `dAppKit.stores.$currentNetwork.get()` (nanostores readable atom).
 - `dAppKit.setNetwork(...)` does not exist. Use `dAppKit.switchNetwork(network)`.
-- `dAppKit.client` does not exist. Use `useCurrentClient()` or `dAppKit.getClient()`.
+- `dAppKit.client` does not exist. Use `useCurrentClient()` (React) or `dAppKit.getClient()` (non-React).
 - `dAppKit.signAndExecuteTransaction(...)` returns a discriminated union (`TransactionResult`). Do not assume `res.digest` at top-level.
+- **Breaking change — `signTransaction` / `signPersonalMessage` no longer accept `chain` parameter** (*verified: `SignTransactionArgs = Omit<SuiSignTransactionInput, 'account' | 'chain' | 'transaction'>` in dapp-kit-core types*). Remove `chain: \`sui:${network}\`` from any call site migrated from 1.x `useSignTransaction` / `useSignPersonalMessage` hooks.
+- **`executeTransaction` vs `signAndExecuteTransaction`**: use `dAppKit.signAndExecuteTransaction` when the wallet must sign (user interaction required). Use `client.executeTransaction` when you already have signatures (for example sponsored or pre-signed flows). Do not swap the two.
 
 ```typescript
 const res = await dAppKit.signAndExecuteTransaction({ transaction: tx });
 const digest =
   res.$kind === 'Transaction' ? res.Transaction.digest : res.FailedTransaction.digest;
 ```
+
 
 ---
 
