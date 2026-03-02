@@ -197,7 +197,7 @@ const changed = tx.effects?.changedObjects ?? [];
 
 | 1.x field path | 2.x field path | Notes |
 |----------------|----------------|-------|
-| `receipt.rawTransaction` | `tx.bcs` | `Uint8Array` (when `include: { bcs: true }`) |
+| `receipt.rawTransaction` | `tx.bcs` | `Uint8Array` (when `include: { bcs: true }`). **Breaking change**: 1.x `rawTransaction` was BCS-encoded `SenderSignedData` with a 4-byte ULEB128 list-count prefix `[0x01,0x00,0x00,0x00]`. 2.x gRPC `tx.bcs` is pure `TransactionData` bytes with no prefix. Remove any `slice(4)` that was applied to `rawTransaction`. Use `Transaction.from(tx.bcs)` directly. |
 | `receipt.objectChanges` | `tx.effects?.changedObjects` | No top-level `objectChanges` in core result |
 | `receipt.effects.created[]` | Filter `tx.effects?.changedObjects` by `idOperation === 'Created'` | Use `outputState` / `outputOwner` as needed |
 | `receipt.timestampMs` | `tx.epoch` | Epoch identifier, not millisecond timestamp |
@@ -242,10 +242,12 @@ False-negative traps (static checks may miss):
    - Example mismatch class: gRPC `Transaction.bcs` vs GraphQL `Transaction.transactionBcs`.
    - Mitigation: schema introspection + query smoke checks (Gate F), and always check `response.errors`.
 
-2. Multi-source byte-format assumptions can break at runtime.
-   - Both branches may produce byte arrays, but source contracts can differ.
-   - Do not apply unconditional shared offsets (for example blind `slice(4)`) across gRPC and GraphQL paths.
-   - Mitigation: source-aware normalization contract + runtime tests for both branches (Gate F).
+2. Byte-format assumptions from Sui 1.x will break silently at runtime.
+   - **Root cause**: This is a Sui SDK version change, not a gRPC vs GraphQL difference.
+     - Sui 1.x JSON-RPC `rawTransaction` → BCS-encoded `SenderSignedData` with a 4-byte ULEB128 list-count prefix (`[0x01,0x00,0x00,0x00]`). Legacy code often stripped these with `slice(4)` before passing to `Transaction.from()`.
+     - Sui 2.x gRPC `tx.bcs` → pure `TransactionData` bytes, no prefix. Applying `slice(4)` here truncates real data and causes BCS parse failure.
+   - Do not carry over `rawTransaction.slice(4)` patterns into 2.x code.
+   - Mitigation: always use `Transaction.from(rawBytes)` directly — the SDK handles format detection internally. Run runtime tests for both gRPC and GraphQL fallback paths (Gate F).
 
 ```typescript
 import { SuiGrpcClient } from '@mysten/sui/grpc';
@@ -356,9 +358,9 @@ async function fetchTransactionBcs(network: Network, digest: string) {
 }
 ```
 
-> Operational note: if your project parses transaction bytes manually, verify byte shape per source before applying byte-offset logic.
-> Some flows return `TransactionData` bytes directly, while others may include signed-envelope bytes.
-> `Transaction.from(...)` accepts base64-encoded bytes, so GraphQL `transactionBcs` can usually be passed directly.
+> Operational note: if your project parses transaction bytes manually, use `Transaction.from(rawBytes)` directly — do not add byte-offset logic.
+> **Byte format changed between SDK versions**: Sui 1.x JSON-RPC `rawTransaction` was BCS-encoded `SenderSignedData` including a 4-byte prefix (`[0x01,0x00,0x00,0x00]`). Sui 2.x gRPC `tx.bcs` and GraphQL `transactionBcs` are pure `TransactionData` bytes with no prefix. Any `slice(4)` applied to `rawTransaction` must be removed.
+> `Transaction.from(...)` accepts both `Uint8Array` (gRPC `tx.bcs`) and base64-encoded strings (GraphQL `transactionBcs`); pass the raw bytes or string directly.
 > Official `SuiGraphQLClient` docs currently show both:
 > - mainnet example: `https://sui-mainnet.mystenlabs.com/graphql`
 > - testnet query example: `https://graphql.testnet.sui.io/graphql`
