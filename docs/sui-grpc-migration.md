@@ -175,6 +175,30 @@ const exec = await client.executeTransaction({
 | `showEvents: true` | `events: true` | Events |
 | `showBalanceChanges: true` | `balanceChanges: true` | Balance changes |
 | `showObjectChanges: true` | `objectTypes: true` | For changed objects, use `include: { effects: true }` + `effects.changedObjects` |
+| `showContent: true` | `json: true` (or `content: true` for raw BCS) | **Breaking change — see below** |
+| `showBcs: true` | `content: true` | Raw BCS `Uint8Array` |
+
+> **Breaking change — object JSON field shape (`showContent` → `include: { json: true }`):**
+> JSON-RPC `showContent: true` output was wrapped by the SDK in a `fields` layer:
+> ```
+> obj.data.content.fields  →  { value: { fields: { blob_id: '...', id: { id: '0x...' } } } }
+> ```
+>
+> gRPC `include: { json: true }` (`obj.json`) maps Move struct fields directly to JSON keys — **no extra `fields` wrapper**:
+> ```
+> obj.json  →  { value: { blob_id: '...', id: '0x...' } }
+> ```
+>
+> Key differences:
+> - The `fields` wrapper layer is gone. JSON-RPC's `content.fields.X` becomes `obj.json.X`.
+> - Move struct field names are preserved as-is. If a Move struct has a field named `value`, it appears as `obj.json.value` — not removed.
+> - Object `id` (the Move `UID`) changes from `{ id: '0x...' }` to plain `'0x...'` string.
+> - TypeScript does **not** catch shape mismatches. `obj.json` is typed as `Record<string, unknown>`. Optional-chain access and `as` casts compile without error even when the path is wrong, silently producing `undefined` or a default value.
+>
+> SDK source evidence: `grpc/core.mjs` — `Value.toJson(object.result.object.json)` (protobuf `google.protobuf.Value` → JS object, no additional wrapping by the SDK).
+>
+> Migration rule: replace every `content.fields.X` or `.fields.X` access with `obj.json.X`. Log `obj.json` at runtime before finalizing field paths — **do not rely on tsc or optional-chain access alone**.
+
 
 ### 4.5 Transaction Result Shape Changes
 
@@ -360,7 +384,7 @@ async function fetchTransactionBcs(network: Network, digest: string) {
 
 > Operational note: if your project parses transaction bytes manually, use `Transaction.from(rawBytes)` directly — do not add byte-offset logic.
 > **Byte format changed between SDK versions**: Sui 1.x JSON-RPC `rawTransaction` was BCS-encoded `SenderSignedData` including a 4-byte prefix (`[0x01,0x00,0x00,0x00]`). Sui 2.x gRPC `tx.bcs` and GraphQL `transactionBcs` are pure `TransactionData` bytes with no prefix. Any `slice(4)` applied to `rawTransaction` must be removed.
-> `Transaction.from(...)` accepts both `Uint8Array` (gRPC `tx.bcs`) and base64-encoded strings (GraphQL `transactionBcs`); pass the raw bytes or string directly.
+> `Transaction.from(...)` accepts `Uint8Array` directly (gRPC `tx.bcs`) or a base64-encoded string (GraphQL `transactionBcs`). Both are valid: the SDK handles `fromBase64` internally when given a string. The code examples in this guide use `fromBase64(bcs64)` before passing to produce `Uint8Array` — either approach is correct.
 > Official `SuiGraphQLClient` docs currently show both:
 > - mainnet example: `https://sui-mainnet.mystenlabs.com/graphql`
 > - testnet query example: `https://graphql.testnet.sui.io/graphql`

@@ -46,17 +46,23 @@ rg "\"@mysten/dapp-kit\"\\s*:" . -g "**/package.json" -g "!**/node_modules/**" -
 rg "\"@mysten/dapp-kit-react\"\\s*:" . -g "**/package.json" -g "!**/node_modules/**" -g "!.git/**"
 
 # Gate D: hardcoded-network detector for digest loader paths (review required)
-rg -n -P "new\\s+SuiGrpcClient\\(\\s*\\{[\\s\\S]{0,240}?network\\s*:\\s*['\\\"](?:mainnet|testnet|devnet|localnet)['\\\"]" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
-rg -n -P "new\\s+SuiGraphQLClient\\(\\s*\\{[\\s\\S]{0,240}?network\\s*:\\s*['\\\"](?:mainnet|testnet|devnet|localnet)['\\\"]" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
+# -U enables multiline mode required for [\.\s\S]{0,240}? across line breaks.
+rg -n -U -P "new\\s+SuiGrpcClient\\(\\s*\\{[\\s\\S]{0,240}?network\\s*:\\s*['\\\"](?:mainnet|testnet|devnet|localnet)['\\\"]" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
+rg -n -U -P "new\\s+SuiGraphQLClient\\(\\s*\\{[\\s\\S]{0,240}?network\\s*:\\s*['\\\"](?:mainnet|testnet|devnet|localnet)['\\\"]" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
 
 # Gate E: GraphQL connection-shape detector (review required)
+# Note: may match objectChanges/balanceChanges inside comments, template literals, or string values.
+# All matches require manual triage; confirm match is inside an actual GraphQL selection set before marking BLOCKER.
 rg -n -U -P "objectChanges\\s*\\{\\s*(?!nodes\\b|edges\\b|\\.\\.\\.)" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs,graphql,gql}" -g "!**/node_modules/**" -g "!.git/**"
 rg -n -U -P "balanceChanges\\s*\\{\\s*(?!nodes\\b|edges\\b|\\.\\.\\.)" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs,graphql,gql}" -g "!**/node_modules/**" -g "!.git/**"
 
 # === Conditional gates (run only when applicable) ===
 
 # Gate B: no legacy Walrus/SuiNS client construction (when optional track applies)
-rg "new WalrusClient|new SuinsClient|@mysten/sui/client|getFullnodeUrl|@mysten/sui/experimental" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
+# Note: @mysten/sui/client subpaths (e.g. @mysten/sui/client/types) are valid in 2.x.
+# Only flag bare @mysten/sui/client (without a slash-delimited subpath after 'client').
+rg "new WalrusClient|new SuinsClient|getFullnodeUrl|@mysten/sui/experimental" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
+rg "from ['\"]@mysten/sui/client['\"]|require\(['\"]@mysten/sui/client['\"]\)" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
 
 # Gate F trigger detector (conditional runtime gate)
 rg -n "transactionBcs|transaction\\s*\\(digest:|getTransaction\\(|SuiGraphQLClient|query\\s*:\\s*`" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs,graphql,gql}" -g "!**/node_modules/**" -g "!.git/**"
@@ -70,7 +76,8 @@ Pass criteria:
   - step 2: if Gate C has matches, run Gate C.2 hook-level triage
     - if hook usage exists, dependency may remain and matched files/hook names must be reported
     - if hook usage does not exist, run Gate C.3 and Gate C.4
-      - if only provider/wrapper patterns are present and legacy `@mysten/dapp-kit` is removed while `@mysten/dapp-kit-react` is present:
+      - Gate C.4 interpretation: if Gate C.4 shows `@mysten/dapp-kit` is **absent** (or removed) and `@mysten/dapp-kit-react` is **present**, the React Query wrapper is a vestigial peer-dep. If `@mysten/dapp-kit` is still present, treat as unresolved legacy dep — mark `BLOCKER`.
+      - if C.3 shows only provider/wrapper patterns and C.4 confirms dapp-kit removed + dapp-kit-react present:
         treat as vestigial peer-dep wrapper, remove wrapper code, rerun Gate C, then remove `@tanstack/react-query` if clean
       - otherwise mark as `BLOCKER` for manual review (import exists but non-hook usage is unclear)
 
@@ -169,18 +176,22 @@ Record:
 
 Apply Gate F when migration changes:
 - GraphQL query field selection in digest-loading paths, or
-- two-stage loaders that combine gRPC and GraphQL bytes.
+- two-stage loaders that combine gRPC and GraphQL bytes, or
+- byte-offset / byte-format operations on transaction bytes (including removal of legacy `slice(4)` patterns), or
+- object field access that reads Move struct content via `json: true` (was `showContent`).
 
-Why this gate exists:
+Why tsc is insufficient and Gate F is required:
 - TypeScript does not validate GraphQL field names inside query strings by default.
 - `SuiGraphQLClient.query<Result>()` generic types are developer-declared and can diverge from real schema fields.
 - Byte arrays from different sources can have different binary contracts; static grep/type checks cannot prove runtime parse safety.
+- `obj.json` is typed as `Record<string, unknown>`. Optional-chain access and `as` casts both compile cleanly even when the actual JSON shape has changed (for example `value.fields.X` → `X`). Wrong-shape access silently returns `undefined` or a falsy default, not a type error.
 
 Required checks:
 1. Schema introspection for target types before finalizing new query fields.
 2. Query-level smoke check for `transaction(digest)` field paths used by your loader.
-3. Fallback-path runtime test that actually executes the GraphQL branch (not only gRPC happy-path).
-4. Source-aware byte normalization test (no unconditional shared byte-offset assumptions).
+3. Fallback-path runtime test: the GraphQL branch must be executed with gRPC **forced to fail** (for example by using an invalid digest for gRPC only, or temporarily throwing in the gRPC stage) so that the GraphQL path actually runs. Execution must be evidenced by a log line showing `source: graphql` or equivalent. A code comment or marker alone is not sufficient.
+4. Byte normalization runtime test: call `Transaction.from(tx.bcs)` on an actual response and verify no parse error. Do not pass the result to tsc only.
+5. Object JSON shape runtime test: log `obj.json` for actual fetched objects and confirm field values match expected shape. Do not trust `as`-cast access without runtime evidence.
 
 Suggested commands (replace placeholders):
 
@@ -201,10 +212,16 @@ curl -sS "<your-graphql-url>" \
 ```
 
 Pass criteria:
-- Gate F is explicitly marked `N/A` with evidence when no relevant code was changed.
+- Gate F `N/A` is valid only when **all** of the following are true:
+  - No GraphQL query field selection was added or changed in digest-loading paths
+  - No two-stage loader byte handling was modified
+  - No `slice(4)` or other byte-offset patterns were added or removed
+  - No `include: { json: true }` object field access was added or changed
+  If any of the above is false, Gate F is required and `N/A` is not acceptable.
 - For applicable changes, introspection and query smoke outputs are attached to the step/audit report.
 - GraphQL fallback path execution is evidenced (for example log/source marker, integration test output, or fixture replay).
-- Byte normalization logic is source-aware and covered by runtime tests on both sources.
+- Byte normalization logic is exercised with a real API call and `Transaction.from()` parse confirmed without error.
+- Object JSON field access is confirmed via runtime log output (not tsc alone): actual field values must match expected shape before marking complete.
 
 ## 7) Recommended CI Integration
 
