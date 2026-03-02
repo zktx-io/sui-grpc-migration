@@ -151,61 +151,62 @@ const exec = await client.executeTransaction({
 
 ### 4.3 Method Mapping
 
-| 1.x pattern | 2.x target pattern |
-|----------------------|-------------------|
+| 1.x pattern | 2.x target |
+|---|---|
 | `devInspectTransactionBlock` | `client.simulateTransaction({ include: { commandResults: true } })` |
 | `dryRunTransactionBlock` | `client.simulateTransaction` |
 | `executeTransaction` | `client.executeTransaction({ transaction, signatures })` |
 | `getCoins` | `client.listCoins` |
-| `multiGetObjects` | `client.getObjects` |
+| `multiGetObjects` | `client.getObjects` — returns `(Object \| Error)[]`; see §4.3.1 |
 | `getOwnedObjects` | `client.listOwnedObjects` |
-| `getTransactionBlock` (digest loading) | Two-stage loader: gRPC `getTransaction` first, then GraphQL fallback; avoid single-source loaders |
-| `queryTransactionBlocks` | **Not available on `SuiGrpcClient` — GraphQL only.** Use `address(address).transactions(last: N)`. Address-scoped index is faster than the global `transactions(filter:{affectedAddress})` index. |
-| `queryEvents` / `queryTransactionBlocks` | GraphQL-first (especially long-term/unknown-age data) |
+| `getTransactionBlock` | Two-stage loader: gRPC `getTransaction` → GraphQL fallback; see §4.5 |
+| `queryTransactionBlocks` | **Not on `SuiGrpcClient`.** GraphQL only — see §4.3.1 |
+| `queryEvents` | GraphQL-first |
 
-> `executeTransactionBlock` remains on legacy JSON-RPC client paths and is not a `SuiGrpcClient` method.
-> Note: official gRPC docs may still show `getCoins` in some examples. On `@mysten/sui@2.4.0`, use `listCoins` per installed SDK types.
+> `executeTransactionBlock` is JSON-RPC only, not on `SuiGrpcClient`.
+> Official gRPC docs may show `getCoins`; use `listCoins` per installed SDK types (`@mysten/sui@2.4.0`).
 
-> **`queryTransactionBlocks` is not available on `SuiGrpcClient`** (*verified: not in grpc/client.d.mts*). For address-based transaction discovery use GraphQL:
-> ```graphql
-> # Prefer: address-scoped index (faster, uses per-address index)
-> { address(address: "0x...") { transactions(last: 20) { nodes { digest } } } }
-> # Avoid: global filter scan (slower, uses global affectedAddress index)
-> { transactionBlocks(filter: { affectedAddress: "0x..." }) { nodes { digest } } }
-> ```
+### 4.3.1 Breaking Change Catalog
 
-> **Breaking change — `Transaction.getData().inputs` shape:**
-> 1.x `data.transaction.inputs[0]` → `{ type: 'pure', value: number[] }` and `bcs.Bool.parse(new Uint8Array(inputs[0].value))`
-> 2.x `getData().inputs[0]` → `{ $kind: 'Pure', Pure: { bytes: string } }` (`bytes` is base64-encoded).
-> Migration:
-> ```typescript
-> // 1.x
-> if (tx.inputs[0].type !== 'pure') throw ...
-> bcs.Bool.parse(new Uint8Array(tx.inputs[0].value))
-> // 2.x
-> const inputs = tx.getData().inputs;
-> if (inputs[0].$kind !== 'Pure') throw ...
-> bcs.bool().parse(fromBase64(inputs[0].Pure.bytes))  // bytes is base64, not Uint8Array
-> ```
-> Note: `bcs.Bool` (1.x static) → `bcs.bool()` (2.x function). `Pure.bytes` is a base64 `string` (*verified: Transaction.d.mts line 120–122*); `new Uint8Array(inputs[0].Pure.bytes)` is an anti-pattern that silently produces wrong bytes — always use `fromBase64(inputs[0].Pure.bytes)` instead.
+**`queryTransactionBlocks` → GraphQL address-scoped query**
 
-> **Breaking change — `getObjects` return type is `(Object | Error)[]`:**
-> 1.x `multiGetObjects` raised or returned error fields per-item; callers often treated the array as all-valid.
-> 2.x `client.getObjects()` returns a mixed array where any element can be an `Error` instance (not-found or fetch failure).
-> Silently skipping `Error` items produces a count mismatch that is invisible to the caller — for example 10 objects requested, 8 returned, 2 errors dropped → caller sees 8 and assumes success.
->
-> Anti-pattern: `'objectId' in obj` returns `true` even for `Error` objects if an `objectId` property happens to exist, or may pass through in JS without throwing — do not use field-presence as an error guard.
->
-> Required pattern:
-> ```typescript
-> const { objects } = await client.getObjects({ objectIds, include: { json: true } });
-> for (const obj of objects) {
->   if (obj instanceof Error) {
->     throw obj; // or collect and surface to caller — do not silently skip
->   }
->   // safe to access obj.json, obj.objectId, etc.
-> }
-> ```
+Not available on `SuiGrpcClient` (*verified: grpc/client.d.mts*). Use address-scoped GraphQL:
+
+```graphql
+# Prefer: per-address index (fast)
+{ address(address: "0x...") { transactions(last: 20) { nodes { digest } } } }
+# Avoid: global affectedAddress scan (slow)
+{ transactionBlocks(filter: { affectedAddress: "0x..." }) { nodes { digest } } }
+```
+
+---
+
+**`getObjects` — return type is `(Object | Error)[]`**
+
+2.x returns a mixed array; `Error` items are silently dropped if not checked explicitly.
+
+Anti-pattern — `'objectId' in obj` does not reliably distinguish `Error` from valid objects. Use `instanceof Error`:
+
+```typescript
+const { objects } = await client.getObjects({ objectIds, include: { json: true } });
+for (const obj of objects) {
+  if (obj instanceof Error) throw obj; // surface, do not skip
+  // obj.json, obj.objectId are safe here
+}
+```
+
+---
+
+**`Transaction.getData().inputs` — shape change**
+
+| | 1.x | 2.x |
+|---|---|---|
+| Check | `inputs[0].type !== 'pure'` | `inputs[0].$kind !== 'Pure'` |
+| Value | `inputs[0].value` (`number[]`) | `inputs[0].Pure.bytes` (`string`, base64) |
+| Parse | `bcs.Bool.parse(new Uint8Array(value))` | `bcs.bool().parse(fromBase64(bytes))` |
+
+Anti-pattern: `new Uint8Array(inputs[0].Pure.bytes)` silently produces wrong bytes — `Pure.bytes` is a base64 string, not a byte array (*verified: Transaction.d.mts line 120–122*).
+
 
 
 ### 4.4 JSON-RPC `options` -> Core API `include` Mapping
@@ -221,26 +222,20 @@ const exec = await client.executeTransaction({
 | `showContent: true` | `json: true` (or `content: true` for raw BCS) | **Breaking change — see below** |
 | `showBcs: true` | `content: true` | Raw BCS `Uint8Array` |
 
-> **Breaking change — object JSON field shape (`showContent` → `include: { json: true }`):**
-> JSON-RPC `showContent: true` output was wrapped by the SDK in a `fields` layer:
-> ```
-> obj.data.content.fields  →  { value: { fields: { blob_id: '...', id: { id: '0x...' } } } }
-> ```
+> **Breaking change — object JSON shape (`showContent` → `include: { json: true }`):**
 >
-> gRPC `include: { json: true }` (`obj.json`) maps Move struct fields directly to JSON keys — **no extra `fields` wrapper**:
-> ```
-> obj.json  →  { value: { blob_id: '...', id: '0x...' } }
-> ```
+> | | 1.x (`obj.data.content.fields`) | 2.x (`obj.json`) |
+> |---|---|---|
+> | Shape | `{ value: { fields: { blob_id, id: { id: '0x...' } } } }` | `{ value: { blob_id, id: '0x...' } }` |
+> | `fields` wrapper | Present (SDK-added) | Removed |
+> | `id` field | `{ id: '0x...' }` object | `'0x...'` string directly |
 >
-> Key differences:
-> - The `fields` wrapper layer is gone. JSON-RPC's `content.fields.X` becomes `obj.json.X`.
-> - Move struct field names are preserved as-is. If a Move struct has a field named `value`, it appears as `obj.json.value` — not removed.
-> - Object `id` (the Move `UID`) changes from `{ id: '0x...' }` to plain `'0x...'` string.
-> - TypeScript does **not** catch shape mismatches. `obj.json` is typed as `Record<string, unknown>`. Optional-chain access and `as` casts compile without error even when the path is wrong, silently producing `undefined` or a default value.
+> Migration: replace `content.fields.X` with `obj.json.X`. TypeScript does **not** catch shape mismatches — `obj.json` is typed `Record<string, unknown>`; optional-chain and `as` casts compile without error even when the path is wrong.
 >
-> SDK source evidence: `grpc/core.mjs` — `Value.toJson(object.result.object.json)` (protobuf `google.protobuf.Value` → JS object, no additional wrapping by the SDK).
->
-> Migration rule: replace every `content.fields.X` or `.fields.X` access with `obj.json.X`. Log `obj.json` at runtime before finalizing field paths — **do not rely on tsc or optional-chain access alone**.
+> SDK evidence: `grpc/core.mjs` `Value.toJson(object.result.object.json)` — no additional wrapping beyond protobuf deserialization.
+> Runtime rule: log `obj.json` before finalizing field paths. Do not rely on tsc alone.
+
+
 
 
 ### 4.5 Transaction Result Shape Changes

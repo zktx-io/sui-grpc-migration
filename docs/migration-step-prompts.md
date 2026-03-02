@@ -330,7 +330,7 @@ Checks:
 
 2. Mandatory pattern gates
 - `rg "SuiJsonRpcClient|@mysten/sui/jsonRpc" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"`
-- `rg "new WalrusClient|new SuinsClient|@mysten/sui/client|getFullnodeUrl|@mysten/sui/experimental" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"`
+- `rg "new WalrusClient|new SuinsClient|getFullnodeUrl|@mysten/sui/experimental" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"`
 - `rg -n -P "new\\s+SuiGrpcClient\\(\\s*\\{[\\s\\S]{0,240}?network\\s*:\\s*['\\\"](?:mainnet|testnet|devnet|localnet)['\\\"]" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"`
 - `rg -n -P "new\\s+SuiGraphQLClient\\(\\s*\\{[\\s\\S]{0,240}?network\\s*:\\s*['\\\"](?:mainnet|testnet|devnet|localnet)['\\\"]" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"`
 - `rg -n -U -P "objectChanges\\s*\\{\\s*(?!nodes\\b|edges\\b|\\.\\.\\.)" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs,graphql,gql}" -g "!**/node_modules/**" -g "!.git/**"`
@@ -455,7 +455,7 @@ Run integration gates:
 
 ```bash
 rg "SuiJsonRpcClient|@mysten/sui/jsonRpc" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
-rg "new WalrusClient|new SuinsClient|@mysten/sui/client|getFullnodeUrl|@mysten/sui/experimental" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
+rg "new WalrusClient|new SuinsClient|getFullnodeUrl|@mysten/sui/experimental" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"
 ```
 
 Verify:
@@ -487,7 +487,7 @@ Run post-migration validation from the project root.
 3. Run `test` script if it exists.
 
 Also run:
-- `rg "new WalrusClient|new SuinsClient|@mysten/sui/client|getFullnodeUrl|@mysten/sui/experimental" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"`
+- `rg "new WalrusClient|new SuinsClient|getFullnodeUrl|@mysten/sui/experimental" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"`
 - `rg "SuiJsonRpcClient|@mysten/sui/jsonRpc" . -g "**/*.{ts,tsx,js,jsx,mjs,cjs}" -g "!**/node_modules/**" -g "!.git/**"`
 
 Rules:
